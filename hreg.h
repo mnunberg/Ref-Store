@@ -4,7 +4,7 @@
 #include <perl.h>
 #include <stdint.h>
 
-#define HR_DEBUG
+//#define HR_DEBUG
 
 #ifndef HR_DEBUG
 #define HR_DEBUG(fmt, ...) if(getenv("HR_DEBUG")) { warn(fmt, ## __VA_ARGS__); }
@@ -20,19 +20,27 @@
 
 #define _mg_action_list(mg) (HR_Action*)mg->mg_ptr
 
+#define mk_ptr_string(vname, ptr) \
+    char vname[20] = { '\0' }; \
+    sprintf(vname, "%lu", ptr);
+
+
+//#define HR_MAKE_PARENT_RV
+
 #define HREG_API_INTERNAL
 
 typedef enum {
-    HR_ACTION_TYPE_DEL_AV = 1,
-    HR_ACTION_TYPE_DEL_HV = 2,
-    HR_ACTION_TYPE_CALL_CV = 3
+    HR_ACTION_TYPE_NULL         = 0,
+    HR_ACTION_TYPE_DEL_AV       = 1,
+    HR_ACTION_TYPE_DEL_HV       = 2,
+    HR_ACTION_TYPE_CALL_CV      = 3,
+    HR_ACTION_TYPE_CALL_CFUNC   = 4,
 } HR_ActionType_t;
 
 typedef enum {
     HR_KEY_TYPE_NULL= 0,
     HR_KEY_TYPE_PTR = 1,
-    HR_KEY_TYPE_STR = 2,
-    HR_KEY_TYPE_PV  = 3
+    HR_KEY_TYPE_STR = 2
 } HR_KeyType_t;
 
 typedef enum {
@@ -41,26 +49,21 @@ typedef enum {
     HR_ACTION_EMPTY
 } HR_DeletionStatus_t;
 
-typedef struct HR_Action HR_Action;
-
-#define HR_ACTION_FIELDS \
-    HR_Action *next; \
-    char       *key; \
-    SV        *collection; \
-    unsigned int is_head:1; \
-    int        ktype:3; \
-    int        atype:4; \
-
-struct HR_Action_HEAD {
-    HR_ACTION_FIELDS;
+enum {
+    HR_FLAG_STR_NO_ALLOC = 1 << 0,
+    HR_FLAG_HASHREF_WEAKEN = 1 << 1,
 };
 
+typedef struct HR_Action HR_Action;
+
 struct
-// __attribute__((__packed__)) 
+__attribute__((__packed__))
 HR_Action {
     HR_Action   *next;
     char        *key;
-    int          ktype;
+    int          ktype:4;
+    int          atype:4;
+    uint8_t      flags:3;
     SV          *hashref;
     
     /*TODO:
@@ -69,12 +72,11 @@ HR_Action {
     */
 };
 
+#define HR_ACTION_LIST_TERMINATOR \
+{ NULL, NULL, HR_KEY_TYPE_NULL, HR_ACTION_TYPE_NULL, 0, NULL }
 
 HREG_API_INTERNAL
-void HR_add_action(
-    HR_Action *action_list, char *key, HR_KeyType_t,
-    SV *hashref, int want_unique
-);
+void HR_add_action(HR_Action *action_list, HR_Action *new_action, int want_unique);
 
 HREG_API_INTERNAL
 void HR_trigger_and_free_actions(HR_Action *action_list);
@@ -100,11 +102,7 @@ void HR_PL_del_action(SV* objref, SV *hashref);
 HREG_API_INTERNAL
 void HR_add_actions_real(SV *objref, HR_Action *actions);
 
-//Specific implementation for Hash::Registry
-void HR_impl_value_init(SV *vobj, SV *reverse);
-void HR_impl_key_init(SV *keyobj, SV *forward_table, SV *scalar_lookup,
-                      char *scalar_key);
-
-void HR_impl_value_init_a(SV* vobj, SV* attrhash);
+void HR_PL_add_action_ptr(SV *objref, SV *hashref);
+void HR_PL_add_action_str(SV *objref, SV *hashref, const char *key);
 
 #endif

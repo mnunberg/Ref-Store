@@ -35,11 +35,28 @@ use Inline C => $CBLOB;
 our @EXPORT = qw(
     HR_PL_add_actions
     HR_PL_del_action
-    
-    HR_impl_value_init
-    HR_impl_key_init
-    HR_impl_value_init_a
+    HR_PL_add_action_ptr
+    HR_PL_add_action_str
+    HRXSK_new
+    HRXSK_kstring
+    HRXSK_encap_new
+    HRXSK_encap_kstring
+    HRXSK_encap_weaken
+    HRXSK_encap_link_value
 );
+
+{
+    no strict 'refs';
+    my $cls = 'Hash::Registry::XS::Key';
+    *{$cls.'::weaken_encapsulated'} = sub { };
+    *{$cls.'::kstring'} = \&HRXSK_kstring;
+    *{$cls.'::link_value'} = sub { };
+    
+    $cls .= '::Encapsulating';
+    *{$cls.'::weaken_encapsulated'} = \&HRXSK_encap_weaken;
+    *{$cls.'::kstring'} = \&HRXSK_encap_kstring;
+    *{$cls.'::link_value'} = \&HRXSK_encap_link_value;
+}
 
 package Hash::Registry::XS::Key;
 use strict;
@@ -49,25 +66,15 @@ use Devel::Peek;
 use Data::Hexdumper qw(hexdump);
 use Internals qw(SetRefCount GetRefCount);
 use Hash::Registry::Common;
-use base qw(Hash::Registry::Key);
 Hash::Registry::XS::cfunc->import();
 use Log::Fu;
 
-sub new {
-    my ($cls,$scalar,$table) = @_;
-    my $self = [ "$scalar", $scalar, $table ];
-    bless $self, $cls;
-        
-    HR_impl_key_init(
-        $self, $table->forward, $table->scalar_lookup,
-        "$scalar"
-    );
-    
-    $table->scalar_lookup->{$scalar} = $self;
-    weaken($table->scalar_lookup->{$scalar});
-    
-    return $self;
-}
+*new = \&HRXSK_new;
+*kstring = \&HRXSK_kstring;
+
+sub weaken_encapsulated { }
+sub unlink_value { }
+
 
 package Hash::Registry::XS;
 use Scalar::Util qw(refaddr weaken);
@@ -75,32 +82,33 @@ use strict;
 use warnings;
 use base qw(Hash::Registry);
 Hash::Registry::XS::cfunc->import();
+use Log::Fu;
 
-sub kcls () { 'Hash::Registry::XS::Key' }
-sub acls () { 'Hash::Registry::XS::Attribute' }
-
-sub value_init {
-    #my ($self,$value) = @_;
-    HR_impl_value_init($_[1], $_[0]->reverse);
+sub new_key {
+    my ($self,$scalar) = @_;
+    if(!ref $scalar) {
+        return HRXSK_new('Hash::Registry::XS::Key',
+                     $scalar, $self->forward, $self->scalar_lookup);
+    } else {
+        return HRXSK_encap_new('Hash::Registry::XS::Key::Encapsulating',
+                               $scalar, $self, $self->forward,
+                               $self->scalar_lookup);
+    }
 }
 
-sub value_init_a {
-    HR_impl_value_init_a($_[1], $_[2]);
+sub dref_add_ptr {
+    my ($self,$value,$hashref) = @_;
+    HR_PL_add_action_ptr($value, $hashref);
 }
 
-sub value_cleanup {
-    #my ($self,$value) = @_;
-    HR_PL_del_action($_[1], $_[0]->reverse);
+sub dref_add_str {
+    my ($self,$value,$hashref,$str) = @_;
+    HR_PL_add_action_str($value,$hashref,$str);
 }
 
-sub value_deinit_a {
-    #my ($value,$attrhash) = @_;
-    HR_PL_del_action($_[1], $_[2]);
+sub dref_del_ptr {
+    my ($self,$value,$hashref) = @_;
+    HR_PL_del_action($value, $hashref);
 }
 
-sub impl_init { }
-
-sub KString {
-    my ($cls,$key) = @_;
-    0+$key;
-}
+1;

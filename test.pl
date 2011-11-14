@@ -26,6 +26,7 @@ use Log::Fu { level=> "debug" };
 use lib "/home/mordy/src/Hash-Registry/lib";
 use Benchmark qw(:all);
 use Devel::Peek qw(mstat);
+use Memory::Usage;
 
 my $Htype = 'Hash::Registry::PP';
 GetOptions('x|xs' => \my $use_xs,
@@ -47,20 +48,28 @@ log_info("Selected $Htype implementation");
 
 eval "require $Htype";
 
-my $i_BEGIN = 2;
+my $i_BEGIN = 1;
 my $i_END = $count;
+my $Mu = Memory::Usage->new();
 sub single_pass {
 	my $Hash = $Htype->new();
 	my @olist;
+	#Create object list..
+	$Mu->record("Object creation");
+	timethis(1, sub {
+		@olist = map { ValueObject->new() } ($i_BEGIN..$i_END);
+	}, "Object Creation");
+	
+	$Mu->record("Key storage");
 	timethis(1, sub {
 		foreach my $i ($i_BEGIN..$i_END) {
-			my $obj = ValueObject->new();
+			my $obj = $olist[$i-1];
 			$Hash->store($i, $obj);
 			$Hash->store(-$i, $obj);
 			push @olist, $obj;
 		}
 	}, "Store");
-
+	
 	log_infof("Created %d objects\n", $ValueObject::ObjectCount);
 #print Dumper($Hash);
 	log_infof("Have %d objects now", $ValueObject::ObjectCount);
@@ -89,18 +98,33 @@ sub single_pass {
 	}, "Fetch");
 	
 	my $ATTRTYPE = 42;
+	my $ATTRTYPE_ALT = "ALLYOURBASE";
 	$Hash->register_kt($ATTRTYPE, "TESTATTR");
+	$Hash->register_kt($ATTRTYPE_ALT, "ALTATTR");
+	my @attrpairs = (
+		[43, $ATTRTYPE],
+		[666, $ATTRTYPE],
+		[770, $ATTRTYPE],
+		[1, $ATTRTYPE_ALT]
+	);
 	
-	timethis(1, sub {
-		foreach my $o (@olist) {
-			log_info("ATTRSTORE V=$o");
-			$Hash->store_a(43, $ATTRTYPE, $o);
-		}
-		print Dumper($Hash);
-	}, "Attribute (STORE)");
-	
+	#timethis(1, sub {
+	#	foreach my $o (@olist) {
+	#		$Hash->store_a(@$_, $o) foreach @attrpairs;
+	#	}
+	#	#print Dumper($Hash);
+	#}, "Attribute (STORE)");
+	#
+	#my $result_count = 0;
+	#timethis(1, sub {
+	#	map { $result_count += scalar $Hash->fetch_a(@$_) }
+	#		@attrpairs;
+	#}, "Attribute (FETCH)");
+	#log_info("Got total $result_count entries");
 	
 	timethis(1, sub { @olist = () }, "Delete");
+	$Mu->record("Objects deleted");
+	$Mu->dump();
 
 
 	log_debug("Everything should be cleared");

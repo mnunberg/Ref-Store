@@ -74,11 +74,45 @@ sub test_multiple_hashes {
     }
     is($results, 2, "Storage in multiple HR objects");
 }
+use Log::Fu;
+use Internals qw(GetRefCount);
+use Devel::Peek qw(Dump);
+
+sub test_object_keys {
+    my $hash = $Impl->new();
+    my $v = ValueObject->new();
+    {
+        my $key = KeyObject->new();
+        $hash->store($key, $v);
+        is($hash->fetch($key), $v, "Object key matching");
+        print Dumper($hash);
+    }
+    #print Dumper($hash);
+    ok(!$hash->has_value($v), "Object key GC");
+    
+    #Try key GC with value going out of scope
+    diag "Value out of scope";
+    $v = undef;
+}
+
+sub test_object_keys2 {
+    my $hash = $Impl->new();
+    my $key2 = KeyObject->new();
+    {
+        my $v2 = ValueObject->new();
+        $hash->store($key2, $v2);
+    }
+    ok(!$hash->has_key($key2));
+    print Dumper($hash);
+    
+}
 
 sub test_all {
     eval "require $Impl";
     test_scalar_key();
     test_multiple_hashes();
+    test_object_keys();
+    test_object_keys2();
     done_testing();
 }
 1;

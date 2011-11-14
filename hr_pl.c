@@ -136,8 +136,7 @@ HR_add_actions_real(SV* objref, HR_Action *actions)
         if(!actions->hashref) {
             die("Must have hashref!");
         }
-        HR_add_action(_mg_action_list(mg), actions->key, actions->ktype,
-                      actions->hashref, 1);
+        HR_add_action(_mg_action_list(mg), actions, 1);
         actions++;
     }
 }
@@ -166,3 +165,32 @@ HR_PL_del_action(SV* objref, SV* hashref)
     
 }
 
+void
+HR_PL_add_action_str(SV *objref, SV *hashref, const char *str)
+{
+	HR_Action actions[] = {
+		{
+			.key = str,
+			.hashref = hashref,
+			.ktype = HR_KEY_TYPE_STR,
+			.atype = HR_ACTION_TYPE_DEL_HV
+		},
+		HR_ACTION_LIST_TERMINATOR
+	};
+	HR_add_actions_real(objref, actions);
+}
+
+void
+HR_PL_add_action_ptr(SV* objref, SV *hashref)
+{
+	HR_Action actions[] = {
+		{
+			.key = SvRV(objref),
+			.hashref = hashref,
+			.ktype = HR_KEY_TYPE_PTR,
+			.atype = HR_ACTION_TYPE_DEL_HV
+		},
+		HR_ACTION_LIST_TERMINATOR
+	};
+	HR_add_actions_real(objref, actions);
+}

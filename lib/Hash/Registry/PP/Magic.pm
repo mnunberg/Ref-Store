@@ -12,6 +12,7 @@ our @EXPORT = qw(
     hr_pp_trigger_register
     hr_pp_trigger_free
     hr_pp_trigger_unregister
+    hr_pp_purge
 );
 
 our $Wizard = wizard(
@@ -19,18 +20,19 @@ our $Wizard = wizard(
     free => \&trigger_fire
 );
 
+sub hr_pp_purge {
+    my ($ref) = @_;
+    &dispell($ref, $Wizard);
+}
+
+
 sub trigger_fire {
+    #log_err("FIRE!");
     my ($ref,$actions) = @_;
-    log_err("FIRE:$ref");
     foreach (@$actions) {
         my ($key,$target) = @$_;
-        if(!$target) {
-            log_warn("Target undefined for $key");
-        } else {
-            log_warn("Have target=$target");
-        }
         next unless $target;
-        #print Dumper($target);
+        #log_warnf("DELETE $target : $key");
         delete $target->{$key};
     }
     @$actions = ();
@@ -38,7 +40,6 @@ sub trigger_fire {
 
 sub hr_pp_trigger_unregister {
     my ($ref,$what) = @_;
-    #log_err("UNREGISTER $ref:$what");
     my $actions = &getdata($ref, $Wizard);
     return unless $actions;
     my $i = $#{$actions};
@@ -48,6 +49,7 @@ sub hr_pp_trigger_unregister {
             splice(@{$actions}, $i);
             last;
         }
+        $i--;
     }
     
     if(!@$actions) {
@@ -55,18 +57,22 @@ sub hr_pp_trigger_unregister {
     }    
 }
 use Carp qw(cluck);
+use Scalar::Util qw(weaken isweak);
 sub hr_pp_trigger_register {
     
     my ($ref,$key,$target) = @_;
     
-    log_errf("$ref: KEY=$key, TARGET=$target");
+    #log_errf("$ref: KEY=$key, TARGET=$target");
     #cluck("Hi!");
     my $data = &getdata($ref, $Wizard);
     if(!$data) {
-        log_err("No data. Casting");
+        #log_err("No data. Casting");
         $data = [ ];
         &cast($ref, $Wizard, $data);
-        push @$data, [$key, $target];
+        my $datum = [ $key, $target ];
+        weaken($datum->[1]);
+        weaken($datum->[0]) if ref $datum->[0];
+        push @$data, $datum;
         return;
     }
     
@@ -77,7 +83,9 @@ sub hr_pp_trigger_register {
             return;
         }
     }
-    push @$data, [$key, $target];
+    my $datum = [$key, $target];
+    weaken($datum->[1]);
+    push @$data, $datum;
 }
 
 1;

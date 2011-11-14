@@ -20,9 +20,17 @@ we accomplish this by doing the following lookups
 
 
 PERFORMANCE
+
+All insertion operations consist of attaching a perl magic structure
+to the underlying SV object. This magic structure is used for chained
+garbage collection. The magic structure contains one more of an 
+HR_Action structure which contains specifiers and hints about which
+type of action 
+
+Value objects have only a single chained
+
 I'm not sure about the performance, but a lookup operation consists
 of the following steps:
-
  (1) Possibly convert the key into something unique,
  (2) Map the key to a key object,
  (3) Find the value by the key object.

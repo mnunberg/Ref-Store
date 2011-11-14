@@ -28,16 +28,6 @@ BEGIN {
 	}
 }
 
-sub register_kt {
-	my ($self,$kt,$id_prefix) = @_;
-	if(!$self->keytypes) {
-		$self->keytypes({});
-	}
-	die "Must have id prefix" unless $id_prefix;
-	if(!exists $self->keytypes->{$kt}) {
-		$self->keytypes->{$kt} = $id_prefix;
-	}
-}
 
 sub get_kt_prefix {
 	my ($self,$kt,$do_die) = @_;
