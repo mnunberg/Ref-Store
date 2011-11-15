@@ -7,7 +7,10 @@
 //#define HR_DEBUG
 
 #ifndef HR_DEBUG
-#define HR_DEBUG(fmt, ...) if(getenv("HR_DEBUG")) { warn(fmt, ## __VA_ARGS__); }
+#define HR_DEBUG(fmt, ...) if(getenv("HR_DEBUG")) { \
+    fprintf(stderr, "[%s:%d (%s)] " fmt "\n", \
+        __FILE__, __LINE__, __func__, ## __VA_ARGS__); \
+}
 #endif
 
 #define _hashref_eq(r1, r2) \
@@ -50,22 +53,42 @@ typedef enum {
 } HR_DeletionStatus_t;
 
 enum {
-    HR_FLAG_STR_NO_ALLOC = 1 << 0,
-    HR_FLAG_HASHREF_WEAKEN = 1 << 1,
+    HR_FLAG_STR_NO_ALLOC =      1 << 0,
+    HR_FLAG_HASHREF_WEAKEN =    1 << 1
 };
 
 typedef struct HR_Action HR_Action;
+typedef void(*HR_ActionCallback)(void*);
 
 struct
 __attribute__((__packed__))
 HR_Action {
     HR_Action   *next;
     char        *key;
-    int          ktype:4;
-    int          atype:4;
-    uint8_t      flags:3;
+    
+    //Action type and union
+    unsigned int atype:3;
+    
+    //TODO: Implement the unions
+    
+    //union {
+    //    SV *hashref;
+    //    SV *arrayref;
+    //    HR_ActionCallback *cb;
+    //} u_action;
+    
+    //Key type and union
+    unsigned int ktype:2;
+    
+    //union {
+    //    unsigned int idx;
+    //    void *ptr;
+    //    char *key;
+    //} u_selector;
+    
     SV          *hashref;
     
+    unsigned int flags:2;
     /*TODO:
      instead of just using a hashref, specify an action type, perhaps deleting
      something from an arrayref or calling a subroutine directly

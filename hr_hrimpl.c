@@ -1,8 +1,29 @@
 #include "hreg.h"
 #include <perl.h>
 #include <string.h>
+#include <stdarg.h>
+
 
 #define REF2HASH(ref) ((HV*)(SvRV(ref)))
+
+#define HR_HKEY_RLOOKUP "reverse"
+#define HR_HKEY_FLOOKUP "forward"
+#define HR_HKEY_SLOOKUP "scalar_lookup"
+
+enum {
+    HR_HKEY_LOOKUP_NULL = 0,
+    HR_HKEY_LOOKUP_SCALAR = 1,
+    HR_HKEY_LOOKUP_FORWARD = 2,
+    HR_HKEY_LOOKUP_REVERSE = 3,
+};
+
+typedef char* HSpec[2];
+
+static HSpec LookupKeys[] = {
+    {HR_HKEY_SLOOKUP, sizeof(HR_HKEY_SLOOKUP)-1},
+    {HR_HKEY_FLOOKUP, sizeof(HR_HKEY_FLOOKUP)-1},
+    {HR_HKEY_RLOOKUP, sizeof(HR_HKEY_RLOOKUP)-1}
+};
 
 static struct
 hr_key_simple {
@@ -15,16 +36,20 @@ static struct
 hr_key_encapsulating {
     SV* obj_ptr;
     SV* table;
+    char *obj_paddr;
 };
 
 static inline HV*
 get_v_hashref(struct hr_key_encapsulating *ke, SV* value);
 
+static inline void
+get_hashes(HV *table, ...);
+
 static void k_encap_cleanup(SV *ksv)
 {
     /*Find our forward entry from the stringified object pointer*/
     struct hr_key_encapsulating *ke = SvPV_nolen(ksv);
-    
+    HR_DEBUG("Hi!");
     HV *table;
 #ifdef HR_MAKE_PARENT_RV
     if(!SvROK(ke->table)) {
@@ -34,43 +59,75 @@ static void k_encap_cleanup(SV *ksv)
 #else
     table = ke->table;
 #endif
+    SV *scalar_lookup, *forward, *reverse;
     
-    SV **scalar_lookup = hv_fetch(table, "scalar_lookup", 0, 0);
-    SV **forward        = hv_fetch(table, "forward", 0, 0);
-    SV **reverse        = hv_fetch(table, "reverse", 0, 0);
+    get_hashes(table,
+               HR_HKEY_LOOKUP_REVERSE, &reverse,
+               HR_HKEY_LOOKUP_FORWARD, &forward,
+               HR_HKEY_LOOKUP_SCALAR, &scalar_lookup,
+               HR_HKEY_LOOKUP_NULL
+    );
+    
     if(!(scalar_lookup && forward && reverse)) {
         die("Uhh...");
     }
-    if(!SvROK(ke->obj_ptr)) {
-        die("This key should not exist when encapsulated object has been deleted");
-    }
     
-    HR_PL_del_action(ke->obj_ptr, *scalar_lookup);
-    HR_PL_del_action(ke->obj_ptr, *forward);
+    if( (!ke->obj_ptr) || (!SvROK(ke->obj_ptr))) {
+        HR_DEBUG("Object has been deleted.");
+    } else {
+        HR_DEBUG("Freeing magic triggers on encapsulated object");
+        HR_PL_del_action(ke->obj_ptr, scalar_lookup);
+        HR_PL_del_action(ke->obj_ptr, forward);
+        HR_DEBUG("Done!");
+    }
     
     /*Perform the deletion manually*/
-    mk_ptr_string(obj_s, SvRV(ke->obj_ptr));
-    SV **stored = hv_delete( REF2HASH(*forward), obj_s, 0, 0);
+    mk_ptr_string(obj_s, ke->obj_paddr);
+    HR_DEBUG("obj_s=%s", obj_s);
+    
+    SV **stored = NULL;
+    stored = hv_fetch( REF2HASH(forward), obj_s, strlen(obj_s), 0);
     if(!stored) {
+        HR_DEBUG("Can't find stored value in forward table");
         return;
-    }    
+    }
+    
     mk_ptr_string(stored_s, SvRV(*stored));
     mk_ptr_string(ksv_s, SvRV(ksv));
+    SV **stored_reverse;
+    HR_DEBUG("stored_s=%s", stored_s);
+    stored_reverse = hv_fetch( REF2HASH(reverse), stored_s, strlen(stored_s), 0);
     
-    SV **stored_reverse = hv_fetch( REF2HASH(*reverse), stored_s, 0, 0);
-    hv_delete( REF2HASH(*scalar_lookup), obj_s, 0, G_DISCARD);
-    hv_delete( REF2HASH(*stored_reverse), ksv_s, 0, G_DISCARD);
-    
-    if(!hv_scalar( REF2HASH(*stored_reverse) )) {
-        hv_delete( REF2HASH(*reverse), stored_s, 0, G_DISCARD);
-        HR_PL_del_action(*stored, *reverse);
+    if(stored_reverse) {
+        hv_delete( REF2HASH(*stored_reverse), ksv_s, strlen(ksv_s), G_DISCARD);
+        
+        SV* reverse_count = hv_scalar(REF2HASH(*stored_reverse));
+        
+        IV real_count = SvIV(reverse_count);
+        HR_DEBUG("Have count=%lu", real_count);
+        
+        if(!real_count) {
+            HR_DEBUG("Removing value's reverse hash");
+            hv_delete( REF2HASH(reverse), stored_s, strlen(stored_s), G_DISCARD);
+            HR_PL_del_action(*stored, reverse);
+        }
+    } else {
+        HR_DEBUG("Can't find anything!");
     }
+    
+    hv_delete( REF2HASH(scalar_lookup), obj_s, strlen(obj_s), G_DISCARD);
+    hv_delete( REF2HASH(forward), obj_s, strlen(obj_s), G_DISCARD );
+    SvREFCNT_dec(ke->obj_ptr);
+    ke->obj_ptr = NULL;
+    HR_DEBUG("Returning...");
 }
 
 void HRXSK_encap_weaken(SV *ksv_ref)
 {
     struct hr_key_encapsulating *ke = SvPV_nolen(SvRV(ksv_ref));
+    HR_DEBUG("Weakening encapsulated object reference");
     sv_rvweaken(ke->obj_ptr);
+    HR_DEBUG("OK=%d", SvROK(ke->obj_ptr));
 }
 
 UV HRXSK_encap_kstring(SV* ksv_ref)
@@ -79,11 +136,14 @@ UV HRXSK_encap_kstring(SV* ksv_ref)
     return SvRV(ke->obj_ptr);
 }
 
+
 SV* HRXSK_encap_new(char *package, SV* object, SV *table, SV* forward, SV* scalar_lookup)
 {
     struct hr_key_encapsulating new_ke;
     HR_DEBUG("Encap key");
-    new_ke.obj_ptr = newSVsv(object);
+    new_ke.obj_ptr = newRV_inc(SvRV(object));
+    
+    new_ke.obj_paddr = SvRV(object);
     
 #ifdef HR_MAKE_PARENT_RV
     new_ke.table = newSVsv(table);
@@ -106,8 +166,7 @@ SV* HRXSK_encap_new(char *package, SV* object, SV *table, SV* forward, SV* scala
     
     SV *self_hval = newSVsv(ksv);
     sv_rvweaken(self_hval);
-    hv_store(((HV*)SvRV(scalar_lookup)),
-                               key_s, strlen(key_s), self_hval, 0);
+    hv_store( REF2HASH(scalar_lookup), key_s, strlen(key_s), self_hval, 0);
     
     HR_Action encap_actions[] = {
         {
@@ -120,12 +179,13 @@ SV* HRXSK_encap_new(char *package, SV* object, SV *table, SV* forward, SV* scala
     };
     
     /*Call our version of DESTROY*/
+    HR_DEBUG("k_encap_cleanup=%p", &k_encap_cleanup);
     HR_Action key_actions[] = {
         {
             .ktype = HR_KEY_TYPE_PTR,
             .atype = HR_ACTION_TYPE_CALL_CFUNC,
             .key = SvRV(ksv),
-            .hashref = k_encap_cleanup,
+            .hashref = &k_encap_cleanup,
         },
         HR_ACTION_LIST_TERMINATOR
     };
@@ -136,18 +196,58 @@ SV* HRXSK_encap_new(char *package, SV* object, SV *table, SV* forward, SV* scala
     return ksv;
 }
 
+static inline void
+get_hashes(HV *table, ...)
+{
+    va_list ap;
+    va_start(ap, table);
+    
+    while(1) {
+        int ltype = (int)va_arg(ap, int);
+        if(!ltype) {
+            break;
+        }
+        SV **hashptr = (SV**)va_arg(ap, SV**);
+        
+        HSpec *kspec = LookupKeys[ltype-1];
+        char *hkey = (*kspec)[0];
+        int klen = (*kspec)[1];
+        SV **result = hv_fetch(table, hkey, klen, 0);
+        
+        if(!result) {
+            *hashptr = NULL;
+        } else {
+            *hashptr = *result;
+        }
+    }
+    va_end(ap);
+}
+
 static inline HV*
 get_v_hashref(struct hr_key_encapsulating *ke, SV* value)
 {
-    SV **reverse = hv_fetch((HV*)(SvRV(ke->table)), "reverse", 0, 0);
+    HV *table;
+#ifdef HR_MAKE_PARENT_RV
+    table = (HV*)SvRV(ke->table);
+#else
+    table = (HV*)ke->table;
+#endif
+    SV *reverse;
+    get_hashes(table,
+               HR_HKEY_LOOKUP_REVERSE, &reverse,
+               HR_HKEY_LOOKUP_NULL);
+    
     if(!reverse) {
         return NULL;
     }
+    
+    HR_DEBUG("Have reverse!");
     mk_ptr_string(vstring, SvRV(value));
-    SV **privhash = hv_fetch(REF2HASH(*reverse), vstring, 0, 0);
+    SV **privhash = hv_fetch(REF2HASH(reverse), vstring, strlen(vstring), 0);
     if(privhash) {
-        return *privhash;
+        return SvRV(*privhash);
     } else {
+        HR_DEBUG("Can't get privhash from hv_fetch");
         return NULL;
     }
 }
@@ -158,20 +258,32 @@ void HRXSK_encap_link_value(SV *self, SV *value)
     struct hr_key_encapsulating *ke = SvPV_nolen(SvRV(self));
     HR_DEBUG("Have key!");
     HV *v_hashref = get_v_hashref(ke, value);
+    HR_DEBUG("Have private hashref");
     if(!v_hashref) {
         die("Couldn't get reverse entry!");
     }
+    
+    SV* hashref_ptr = newRV_inc(v_hashref);
+    
     HR_Action vdel_actions[] = {
         {
             .ktype = HR_KEY_TYPE_PTR,
             .atype = HR_ACTION_TYPE_DEL_HV,
             .key   = SvRV(ke->obj_ptr),
             .flags = HR_FLAG_HASHREF_WEAKEN,
-            .hashref = newRV_noinc(v_hashref)
+            .hashref = hashref_ptr,
         },
         HR_ACTION_LIST_TERMINATOR
     };
     HR_add_actions_real(ke->obj_ptr, vdel_actions);
+    HR_DEBUG("VLINK Done!");
+    
+    /*If we are not truly keeping an SV but an actual HV, then we only need
+     a valid reference for the add_actions() call, but don't actually need
+     to keep it hanging around*/
+#ifndef HR_MAKE_PARENT_RV
+    SvREFCNT_dec(hashref_ptr);
+#endif
 }
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////

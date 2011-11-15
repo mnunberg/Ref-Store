@@ -32,7 +32,9 @@ my $Htype = 'Hash::Registry::PP';
 GetOptions('x|xs' => \my $use_xs,
 	'p|pp' => \my $use_pp,
 	'c|count=i' => \my $count,
-	'i|iterations=i' => \my $iterations);
+	'i|iterations=i' => \my $iterations,
+	'm|mode=s' => \my $Mode
+);
 
 $count ||= 50;
 $iterations ||= 1;
@@ -61,71 +63,75 @@ sub single_pass {
 	}, "Object Creation");
 	
 	$Mu->record("Key storage");
-	timethis(1, sub {
-		foreach my $i ($i_BEGIN..$i_END) {
-			my $obj = $olist[$i-1];
-			$Hash->store($i, $obj);
-			$Hash->store(-$i, $obj);
-			push @olist, $obj;
-		}
-	}, "Store");
-	
-	log_infof("Created %d objects\n", $ValueObject::ObjectCount);
-#print Dumper($Hash);
-	log_infof("Have %d objects now", $ValueObject::ObjectCount);
-	log_infof("FORWARD=%d, REVERSE=%d, KEYS=%d",
-		scalar values %{$Hash->forward},
-		scalar values %{$Hash->reverse},
-		scalar values %{$Hash->scalar_lookup});
-
-
-	timethis(1, sub {
-		foreach my $i($i_BEGIN..$i_END) {
-			eval {
-				my $obj1 = $Hash->fetch($i) or die "POSITIVE KEY FAIL!";
-				my $obj2 = $Hash->fetch(-$i) or die "GAH!";
-				$obj1->isa('ValueObject') &&
-				$obj2->isa('ValueObject') &&
-				$obj1 == $obj2
-					or die
-				"Soemthing happen!";
-				#log_info($obj1);
-			}; if($@) {
-				print Dumper($Hash);
-				die $@;
+	if($Mode =~ /key|all/i ) {
+		timethis(1, sub {
+			foreach my $i ($i_BEGIN..$i_END) {
+				my $obj = $olist[$i-1];
+				$Hash->store($i, $obj);
+				$Hash->store(-$i, $obj);
+				push @olist, $obj;
 			}
-		}
-	}, "Fetch");
+		}, "Store");
+		
+		log_infof("Created %d objects\n", $ValueObject::ObjectCount);
+	#print Dumper($Hash);
+		log_infof("Have %d objects now", $ValueObject::ObjectCount);
+		log_infof("FORWARD=%d, REVERSE=%d, KEYS=%d",
+			scalar values %{$Hash->forward},
+			scalar values %{$Hash->reverse},
+			scalar values %{$Hash->scalar_lookup});
 	
-	my $ATTRTYPE = 42;
-	my $ATTRTYPE_ALT = "ALLYOURBASE";
-	$Hash->register_kt($ATTRTYPE, "TESTATTR");
-	$Hash->register_kt($ATTRTYPE_ALT, "ALTATTR");
-	my @attrpairs = (
-		[43, $ATTRTYPE],
-		[666, $ATTRTYPE],
-		[770, $ATTRTYPE],
-		[1, $ATTRTYPE_ALT]
-	);
 	
-	#timethis(1, sub {
-	#	foreach my $o (@olist) {
-	#		$Hash->store_a(@$_, $o) foreach @attrpairs;
-	#	}
-	#	#print Dumper($Hash);
-	#}, "Attribute (STORE)");
-	#
-	#my $result_count = 0;
-	#timethis(1, sub {
-	#	map { $result_count += scalar $Hash->fetch_a(@$_) }
-	#		@attrpairs;
-	#}, "Attribute (FETCH)");
-	#log_info("Got total $result_count entries");
+		timethis(1, sub {
+			foreach my $i($i_BEGIN..$i_END) {
+				eval {
+					my $obj1 = $Hash->fetch($i) or die "POSITIVE KEY FAIL!";
+					my $obj2 = $Hash->fetch(-$i) or die "GAH!";
+					$obj1->isa('ValueObject') &&
+					$obj2->isa('ValueObject') &&
+					$obj1 == $obj2
+						or die
+					"Soemthing happen!";
+					#log_info($obj1);
+				}; if($@) {
+					print Dumper($Hash);
+					die $@;
+				}
+			}
+		}, "Fetch");
+	}
+	
+	if($Mode =~ m/attr|all/i) {
+		my $ATTRTYPE = 42;
+		my $ATTRTYPE_ALT = "ALLYOURBASE";
+		$Hash->register_kt($ATTRTYPE, "TESTATTR");
+		$Hash->register_kt($ATTRTYPE_ALT, "ALTATTR");
+		my @attrpairs = (
+			[43, $ATTRTYPE],
+			[666, $ATTRTYPE],
+			[770, $ATTRTYPE],
+			[1, $ATTRTYPE_ALT]
+		);
+		
+		timethis(1, sub {
+			foreach my $o (@olist) {
+				$Hash->store_a(@$_, $o) foreach @attrpairs;
+			}
+			#print Dumper($Hash);
+		}, "Attribute (STORE)");
+		
+		my $result_count = 0;
+		timethis(1, sub {
+			map { $result_count += scalar $Hash->fetch_a(@$_) }
+				@attrpairs;
+		}, "Attribute (FETCH)");
+		log_info("Got total $result_count entries");
+		
+	}
 	
 	timethis(1, sub { @olist = () }, "Delete");
 	$Mu->record("Objects deleted");
 	$Mu->dump();
-
 
 	log_debug("Everything should be cleared");
 	log_infof("Have %d objects now", $ValueObject::ObjectCount);

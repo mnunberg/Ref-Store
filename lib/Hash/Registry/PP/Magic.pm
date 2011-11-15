@@ -2,7 +2,7 @@ package Hash::Registry::PP::Magic;
 use strict;
 use warnings;
 use Variable::Magic qw(cast dispell wizard getdata);
-use Scalar::Util qw(weaken refaddr);
+use Scalar::Util qw(weaken refaddr reftype);
 use base qw(Exporter);
 use Data::Dumper;
 use Log::Fu;
@@ -32,8 +32,14 @@ sub trigger_fire {
     foreach (@$actions) {
         my ($key,$target) = @$_;
         next unless $target;
+        if(reftype $target eq 'HASH') {
+            delete $target->{$key};
+        } elsif (reftype $target eq 'ARRAY') {
+            delete $target->[$key];
+        } else {
+            die "Unknown target $target";
+        }
         #log_warnf("DELETE $target : $key");
-        delete $target->{$key};
     }
     @$actions = ();
 }
@@ -45,7 +51,7 @@ sub hr_pp_trigger_unregister {
     my $i = $#{$actions};
     while($i >= 0) {
         my ($key,$target) = @{$actions->[$i]};
-        if($target == $what) {
+        if(defined $target && $target eq $what) {
             splice(@{$actions}, $i);
             last;
         }
@@ -79,12 +85,13 @@ sub hr_pp_trigger_register {
     foreach (@$data) {
         my ($ekey,$etarget) = @$_;
         if ($target == $etarget) {
-            log_warn("DUP!");
+            #log_warn("DUP!");
             return;
         }
     }
     my $datum = [$key, $target];
     weaken($datum->[1]);
+    weaken($datum->[0]) if ref $datum->[0];
     push @$data, $datum;
 }
 

@@ -75,6 +75,17 @@ sub register_kt {
 	}
 }
 
+sub maybe_cleanup_value {
+	my ($self,$value) = @_;
+	my $v_rhash = $self->reverse->{$value+0};
+	if(!scalar %$v_rhash) {
+		delete $self->reverse->{$value+0};
+		$self->dref_del_ptr($value, $self->reverse);
+	} else {
+		log_warn(scalar %$v_rhash);
+	}
+}
+
 ################################################################################
 ################################################################################
 ################################################################################
@@ -92,6 +103,11 @@ sub has_value {
 	my ($self,$value) = @_;
 	$value = $value + 0;
 	return exists $self->reverse->{$value};
+}
+
+sub has_attr {
+	my ($self,$attr,$t) = @_;
+	$self->attr_get($attr, $t);
 }
 
 ################################################################################
@@ -112,7 +128,7 @@ sub ukey2ikey {
 	my $expected = delete $options{O_EXCL};
 	my $create_if_needed = delete $options{Create};
 	
-	log_info($ustr);
+	#log_info($ustr);
 	my $o = $self->scalar_lookup->{$ustr};
 	if($expected && $o) {
 		my $existing = $self->forward->{$self->KString($o)};
@@ -214,7 +230,8 @@ sub new_attr {
 
 sub attr_get {
     my ($self,$attr,$t,%options) = @_;
-    my $ustr = $self->keytypes->{$t} . $attr;
+	my $attr_s = ref $attr ? $attr + 0 : $attr;
+    my $ustr = $self->keytypes->{$t} . $attr_s;
     my $aobj = $self->attr_lookup->{$ustr};
     return $aobj if $aobj;
     
@@ -226,6 +243,7 @@ sub attr_get {
     if($options{StrongAttr}) {
         $self->attr_lookup->{$ustr} = $aobj;
     } else {
+		$aobj->weaken_encapsulated();
         weaken($self->attr_lookup->{$ustr} = $aobj);
     }
     return $aobj;
@@ -247,9 +265,11 @@ sub store_a {
 
     #add back-delete references to both the private
     #attribute hash as well as the reverse entry.
+	
     $self->dref_add_ptr($value, $aobj->get_hash);
     $self->dref_add_ptr($value, $self->reverse);
-    
+    $aobj->link_value($value);
+	
     return $value;
 }
 
@@ -274,8 +294,9 @@ sub delete_attr_from_value {
     if(!delete $aobj->get_hash->{$value+0}) {
         return;
     }
-    
+	delete $self->reverse->{$value+0}->{$aobj+0};
     $self->dref_del_ptr($value, $aobj->get_hash);
+	$self->maybe_cleanup_value($value);
 }
 
 sub delete_attr_from_all {
@@ -284,12 +305,13 @@ sub delete_attr_from_all {
 	my $attrhash = $aobj->get_hash;
     return unless $aobj;
 	
-    map {
-        $self->dref_del_ptr($_, $attrhash)
-    } values %$attrhash;
+	while (my ($k,$v) = each %$attrhash) {
+		$self->dref_del_ptr($v, $attrhash);
+		delete $attrhash->{$k};
+		delete $self->reverse->{$v+0}->{$aobj+0};
+		$self->maybe_cleanup_value($v);
+	}
 }
-
-
 
 1;
 
@@ -595,3 +617,43 @@ Returns a list of the keys associated with C<$value>. Note that the return value
 is a I<copy>, and modifying it will have no effect on the table.
 
 =back
+
+
+=head2 EXTENDED API
+
+This provides the API for attributes and typed keys.
+
+Standalone typed-keys are a work in progress.
+
+=head2 register_kt($key_id, $key_prefix)
+
+Register a keytype with the identifier C<$key_id>. You will use this identifier
+for future reference and association, and it will be recognized as a valid keytype.
+
+C<$key_prefix> is an optional prefix for internal storage, so as to make it easier
+to debug L<Data::Dumper> output, or for potential performance gains while hashing.
+It defaults to C<$key_id>
+
+=item store_a($attribute, $attribute_type, $value, %options)
+
+Stores C<$value> under the given attribute and type. Type must have been registered
+using L</register_kt>. It is permissible to store multiple values under the same
+attribute.
+
+=item fetch_a($attribute,$type)
+
+Returns a list of values which match these attributes
+
+=item delete_value_by_attr($attr,$t)
+
+Finds all values matching the given attribute, and deletes them entirely from
+the lookup table. This *Should* return a list of the values deleted.
+
+=item delete_attr_from_value($attr,$type,$value)
+
+Dissociates an attribute from a value. If this is the last lookup entry for the
+value, then the value will be removed from the table.
+
+=item delete_attr_from_all($attr, $type)
+
+Removes this attribute from the database entirely.

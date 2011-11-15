@@ -24,9 +24,7 @@ freehook(pTHX_ SV* target, MAGIC *mg)
 static inline MAGIC*
 get_our_magic(SV* objref, int create)
 {
-	MAGIC *mg;
-	//SV *action_list;
-    
+	MAGIC *mg;    
     HR_Action *action_list;
     SV *target;
     
@@ -131,8 +129,9 @@ HR_add_actions_real(SV* objref, HR_Action *actions)
     }
     
     while(actions->ktype) {
-        HR_DEBUG("ADD: T=%d, K=%p, H=%p", actions->ktype, actions->key,
-                 actions->hashref);
+        HR_DEBUG("ADD: T=%d, A=%d, K=%p, H=%p", actions->ktype,
+				 actions->atype, actions->key,
+                 SvRV(actions->hashref));
         if(!actions->hashref) {
             die("Must have hashref!");
         }
@@ -154,11 +153,12 @@ HR_PL_del_action(SV* objref, SV* hashref)
 	if(!mg) {
 		return;
 	}
+	
     int dv = HR_ACTION_NOT_FOUND;
     
     while( (dv = HR_del_action(_mg_action_list(mg), hashref)) == HR_ACTION_DELETED );
     /*no body*/
-    
+    HR_DEBUG("Delete done");
     if(dv == HR_ACTION_EMPTY) {
         free_our_magic(SvRV(objref));
     }
@@ -168,12 +168,29 @@ HR_PL_del_action(SV* objref, SV* hashref)
 void
 HR_PL_add_action_str(SV *objref, SV *hashref, const char *str)
 {
+	int action_type;
+	
+	int reftype = SvTYPE(SvRV(hashref));
+	int keytype = HR_KEY_TYPE_STR;
+	char *real_key = str;
+	
+	if(reftype == SVt_PVAV) {
+		action_type = HR_ACTION_TYPE_DEL_AV;
+		keytype = HR_KEY_TYPE_PTR;
+		HR_DEBUG("Found Array (idx=%s)", str);
+		sscanf(str, "%d", &real_key);
+		HR_DEBUG("Extracted key=%d", real_key);
+	} else if(reftype == SVt_PVHV) {
+		action_type = HR_ACTION_TYPE_DEL_HV;
+	} else {
+		die("Unknown type %d for target", reftype);
+	}
 	HR_Action actions[] = {
 		{
-			.key = str,
+			.key = real_key,
 			.hashref = hashref,
-			.ktype = HR_KEY_TYPE_STR,
-			.atype = HR_ACTION_TYPE_DEL_HV
+			.ktype = keytype,
+			.atype = action_type
 		},
 		HR_ACTION_LIST_TERMINATOR
 	};

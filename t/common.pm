@@ -81,18 +81,16 @@ use Devel::Peek qw(Dump);
 sub test_object_keys {
     my $hash = $Impl->new();
     my $v = ValueObject->new();
+    
     {
         my $key = KeyObject->new();
         $hash->store($key, $v);
         is($hash->fetch($key), $v, "Object key matching");
-        print Dumper($hash);
     }
     #print Dumper($hash);
-    ok(!$hash->has_value($v), "Object key GC");
+    ok(!$hash->has_value($v),  "Object key GC");
     
     #Try key GC with value going out of scope
-    diag "Value out of scope";
-    $v = undef;
 }
 
 sub test_object_keys2 {
@@ -102,9 +100,61 @@ sub test_object_keys2 {
         my $v2 = ValueObject->new();
         $hash->store($key2, $v2);
     }
-    ok(!$hash->has_key($key2));
-    print Dumper($hash);
+    ok(!$hash->has_key($key2), "Value (OKEY) GC");
     
+}
+
+sub test_scalar_attr {
+    my $hash = $Impl->new;
+    my $t = "my_attribute";
+    my $v = ValueObject->new();
+    $hash->register_kt($t);
+    $hash->store_a(42, $t, $v);
+    ok(grep ($v, $hash->fetch_a(42, $t)), "Attr store");
+    {
+        my $v2 = ValueObject->new();
+        $hash->store_a(42, $t, $v2);
+        my @stored = $hash->fetch_a(42, $t);
+        is(@stored, 2, "Added new value to attribute");
+    }
+    is($hash->fetch_a(42, $t), 1, "Value GC from attr collection");
+    
+    $hash->delete_attr_from_value(42, $t, $v);
+    ok(!$hash->has_value($v), "Value automatically deleted");
+    ok(!$hash->has_attr(42, $t), "Attribute automatically deleted");
+    my $v2 = ValueObject->new();
+    
+    $hash->store_a(42, $t, $v);
+    $hash->store_a(42, $t, $v2);
+    $hash->delete_attr_from_all(42, $t);
+    ok(!($hash->has_attr(42, $t) || $hash->has_value($v) || $hash->has_value($v2)),
+       "Totally deleted!");
+}
+
+sub test_object_attr {
+    my $hash = $Impl->new();
+    my $t = "OBJECT_ATTRIBUTE_";
+    $hash->register_kt($t);
+    my $v = ValueObject->new();
+    my $attr = KeyObject->new();
+    $hash->store_a($attr, $t, $v);
+    ok(grep($v, $hash->fetch_a($attr, $t)), "Object attribute fetch");
+    #print Dumper($hash);
+    $hash->delete_attr_from_value($attr, $t, $v);
+    ok(!($hash->has_attr($attr,$t)||$hash->has_value($v)), "Object attribute deletion");
+    #print Dumper($hash);
+    
+    diag "Destroying $attr";
+    undef $attr;
+    
+    diag "Trying object GC";
+    {
+        my $tmpattr = KeyObject->new();
+        $hash->store_a($tmpattr, $t, $v);
+    }
+    ok(!$hash->has_value($v), "Attribute object GC");
+    #print Dumper($hash);
+    #log_err("Hi!");
 }
 
 sub test_all {
@@ -113,6 +163,8 @@ sub test_all {
     test_multiple_hashes();
     test_object_keys();
     test_object_keys2();
+    test_scalar_attr();
+    test_object_attr();
     done_testing();
 }
 1;

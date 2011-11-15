@@ -67,12 +67,7 @@ sub unlink_value {
 
 sub weaken_encapsulated {
     my $self = shift;
-    log_warn("Weakening..");
     weaken($self->[HR_KFLD_REFSCALAR]);
-    log_warnf("Weak?=%d", isweak($self->[HR_KFLD_REFSCALAR]));
-    log_warnf("Weak?=%d", isweak(
-                                 $self->[HR_KFLD_TABLEREF]->scalar_lookup->
-                                 {$self->[HR_KFLD_STRSCALAR]}));
 }
 
 
@@ -93,7 +88,6 @@ sub kstring {
 use Data::Dumper;
 
 sub DESTROY {
-    log_info("HI");
     my $self = shift;
     my $table = $self->[HR_KFLD_TABLEREF];
     my $obj = $self->[HR_KFLD_REFSCALAR];
@@ -103,13 +97,13 @@ sub DESTROY {
     my $stored = delete $table->forward->{$obj_s};
     
     if($obj) {
-        log_info("Unregistering triggers on $obj");
+        #log_info("Unregistering triggers on $obj");
         hr_pp_trigger_unregister($obj, $table->scalar_lookup);
         #hr_pp_trigger_unregister($obj, $table->forward);
-        log_info("Done");
+        #log_info("Done");
     }
     
-    log_info("Found stored.. $stored", $stored+0);
+    #log_info("Found stored.. $stored", $stored+0);
     
     return unless $stored;
     my $stored_privhash = $table->reverse->{$stored+0};
@@ -118,18 +112,18 @@ sub DESTROY {
         hr_pp_trigger_unregister($obj, $stored_privhash);
     }
     
-    log_info("STRSCALAR=", $self->[HR_KFLD_STRSCALAR]);
+    #log_info("STRSCALAR=", $self->[HR_KFLD_STRSCALAR]);
     delete $stored_privhash->{$self->[HR_KFLD_STRSCALAR]};
     
     if(!scalar %$stored_privhash) {
-        log_info("Table empty!");
+        #log_info("Table empty!");
         delete $table->reverse->{$stored+0};
         hr_pp_trigger_unregister($stored, $table->reverse);
     } else {
         print Dumper($stored_privhash);
         Dump($stored_privhash);
     }
-    log_info("Done");
+    #log_info("Done");
 }
 
 package Hash::Registry::PP;
