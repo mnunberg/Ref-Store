@@ -1,87 +1,32 @@
-package Hash::Registry::XS::cfunc;
-use strict;
-use warnings;
-use File::Slurp qw(read_file);
-use Dir::Self;
-use base qw(Exporter);
-
-my $CBLOB;
-BEGIN {
-    my $base_path = "/home/mordy/src/Hash-Registry/";
-    my @filenames = qw(
-        hreg.h
-        hreg.c
-        hr_hrimpl.c
-        hr_pl.c
-    );
-    foreach my $file (@filenames) {
-        $CBLOB .= sprintf("\n/* FILE: %s */\n", $file);
-        $CBLOB .= read_file("$base_path/$file");
-    }
-    $CBLOB =~ s/^#include.+hreg\.h[">\s+]$//mgi;
-}
-
-
-use Inline
-    C => Config =>
-    NAME => 'hreg',
-    CLEAN_AFTER_BUILD => 0,
-    DIRECTORY   => './inline_build',
-    #FORCE_BUILD => 1,
-    BUILD_NOISY => 1
-;
-use Inline C => $CBLOB;
-
-our @EXPORT = qw(
-    HR_PL_add_actions
-    HR_PL_del_action
-    HR_PL_add_action_ptr
-    HR_PL_add_action_str
-    HRXSK_new
-    HRXSK_kstring
-    HRXSK_encap_new
-    HRXSK_encap_kstring
-    HRXSK_encap_weaken
-    HRXSK_encap_link_value
-);
-
-{
-    no strict 'refs';
-    my $cls = 'Hash::Registry::XS::Key';
-    *{$cls.'::weaken_encapsulated'} = sub { };
-    *{$cls.'::kstring'} = \&HRXSK_kstring;
-    *{$cls.'::link_value'} = sub { };
-    
-    $cls .= '::Encapsulating';
-    *{$cls.'::weaken_encapsulated'} = \&HRXSK_encap_weaken;
-    *{$cls.'::kstring'} = \&HRXSK_encap_kstring;
-    *{$cls.'::link_value'} = \&HRXSK_encap_link_value;
-}
-
 package Hash::Registry::XS::Key;
 use strict;
 use warnings;
-use Scalar::Util qw(refaddr weaken);
-use Devel::Peek;
-use Data::Hexdumper qw(hexdump);
-use Internals qw(SetRefCount GetRefCount);
 use Hash::Registry::Common;
-Hash::Registry::XS::cfunc->import();
-use Log::Fu;
+use Hash::Registry::XS::cfunc;
 
 *new = \&HRXSK_new;
 *kstring = \&HRXSK_kstring;
-
 sub weaken_encapsulated { }
 sub unlink_value { }
+sub link_value {}
 
+
+package Hash::Registry::XS::Key::Encapsulating;
+use strict;
+use warnings;
+use Hash::Registry::XS::cfunc;
+
+*new = \&HRXSK_encap_new;
+*weaken_encapsulated = \&HRXSK_encap_weaken;
+*link_value = \&HRXSK_encap_link_value;
+*kstring = \&HRXSK_encap_kstring;
+sub unlink_value { warn "This needs to be implmemented"; }
 
 package Hash::Registry::XS;
-use Scalar::Util qw(refaddr weaken);
 use strict;
 use warnings;
 use base qw(Hash::Registry);
-Hash::Registry::XS::cfunc->import();
+use Hash::Registry::XS::cfunc;
 use Log::Fu;
 
 sub new_key {

@@ -1,11 +1,7 @@
 #include <string.h>
-#include <perl.h>
 #include <stdint.h>
 #include "hreg.h"
 
-
-
-/*predecl*/
 static inline MAGIC* get_our_magic(SV* objref, int create);
 static inline void free_our_magic(SV* objref);
 static int freehook(pTHX_ SV* target, MAGIC *mg);
@@ -81,7 +77,7 @@ get_our_magic(SV* objref, int create)
 
 static inline void
 free_our_magic(SV* target)
-{    
+{
     MAGIC *mg_last = mg_find(target, PERL_MAGIC_ext);
     MAGIC *mg_cur = mg_last;
 	
@@ -142,7 +138,7 @@ HR_add_actions_real(SV* objref, HR_Action *actions)
 
 void
 HR_PL_add_actions(SV *objref, char *blob) {
-    add_actions_real(objref, (HR_Action*)blob);
+    HR_add_actions_real(objref, (HR_Action*)blob);
 }
 
 void

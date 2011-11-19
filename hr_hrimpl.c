@@ -20,9 +20,9 @@ enum {
 typedef char* HSpec[2];
 
 static HSpec LookupKeys[] = {
-    {HR_HKEY_SLOOKUP, sizeof(HR_HKEY_SLOOKUP)-1},
-    {HR_HKEY_FLOOKUP, sizeof(HR_HKEY_FLOOKUP)-1},
-    {HR_HKEY_RLOOKUP, sizeof(HR_HKEY_RLOOKUP)-1}
+    {HR_HKEY_SLOOKUP, (char*)sizeof(HR_HKEY_SLOOKUP)-1},
+    {HR_HKEY_FLOOKUP, (char*)sizeof(HR_HKEY_FLOOKUP)-1},
+    {HR_HKEY_RLOOKUP, (char*)sizeof(HR_HKEY_RLOOKUP)-1}
 };
 
 static struct
@@ -48,16 +48,16 @@ get_hashes(HV *table, ...);
 static void k_encap_cleanup(SV *ksv)
 {
     /*Find our forward entry from the stringified object pointer*/
-    struct hr_key_encapsulating *ke = SvPV_nolen(ksv);
+    struct hr_key_encapsulating *ke = (struct hr_key_encapsulating*)SvPV_nolen(ksv);
     HR_DEBUG("Hi!");
     HV *table;
 #ifdef HR_MAKE_PARENT_RV
     if(!SvROK(ke->table)) {
         warn("Is table being destroyed?");
     }
-    table = SvRV(ke->table);
+    table = (HV*)SvRV(ke->table);
 #else
-    table = ke->table;
+    table = (HV*)ke->table;
 #endif
     SV *scalar_lookup, *forward, *reverse;
     
@@ -124,7 +124,7 @@ static void k_encap_cleanup(SV *ksv)
 
 void HRXSK_encap_weaken(SV *ksv_ref)
 {
-    struct hr_key_encapsulating *ke = SvPV_nolen(SvRV(ksv_ref));
+    struct hr_key_encapsulating *ke = (struct hr_key_encapsulating*)SvPV_nolen(SvRV(ksv_ref));
     HR_DEBUG("Weakening encapsulated object reference");
     sv_rvweaken(ke->obj_ptr);
     HR_DEBUG("OK=%d", SvROK(ke->obj_ptr));
@@ -132,7 +132,7 @@ void HRXSK_encap_weaken(SV *ksv_ref)
 
 UV HRXSK_encap_kstring(SV* ksv_ref)
 {
-    struct hr_key_encapsulating *ke = SvPV_nolen(SvRV(ksv_ref));
+    struct hr_key_encapsulating *ke = (struct hr_key_encapsulating*)SvPV_nolen(SvRV(ksv_ref));
     return SvRV(ke->obj_ptr);
 }
 
@@ -143,7 +143,7 @@ SV* HRXSK_encap_new(char *package, SV* object, SV *table, SV* forward, SV* scala
     HR_DEBUG("Encap key");
     new_ke.obj_ptr = newRV_inc(SvRV(object));
     
-    new_ke.obj_paddr = SvRV(object);
+    new_ke.obj_paddr = (char*)SvRV(object);
     
 #ifdef HR_MAKE_PARENT_RV
     new_ke.table = newSVsv(table);
@@ -157,7 +157,7 @@ SV* HRXSK_encap_new(char *package, SV* object, SV *table, SV* forward, SV* scala
     HR_DEBUG("New blessed class");
     
     
-    struct hr_key_encapsulating *keptr = SvPV_nolen(SvRV(ksv));
+    struct hr_key_encapsulating *keptr = (struct hr_key_encapsulating*)SvPV_nolen(SvRV(ksv));
     HR_DEBUG("Extracted blob..");
     
     mk_ptr_string(key_s, SvRV(object));
@@ -171,7 +171,7 @@ SV* HRXSK_encap_new(char *package, SV* object, SV *table, SV* forward, SV* scala
     HR_Action encap_actions[] = {
         {
             .ktype = HR_KEY_TYPE_PTR,
-            .key = SvRV(object),
+            .key = (char*)SvRV(object),
             .atype = HR_ACTION_TYPE_DEL_HV,
             .hashref = scalar_lookup
         },
@@ -184,7 +184,7 @@ SV* HRXSK_encap_new(char *package, SV* object, SV *table, SV* forward, SV* scala
         {
             .ktype = HR_KEY_TYPE_PTR,
             .atype = HR_ACTION_TYPE_CALL_CFUNC,
-            .key = SvRV(ksv),
+            .key = (char*)SvRV(ksv),
             .hashref = &k_encap_cleanup,
         },
         HR_ACTION_LIST_TERMINATOR

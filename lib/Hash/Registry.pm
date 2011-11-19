@@ -5,7 +5,7 @@ use Scalar::Util qw(weaken);
 
 use Hash::Registry::Common;
 use Hash::Registry::Attribute;
-
+our $VERSION = '0.01';
 use Log::Fu { level => "debug" };
 use Class::XSAccessor {
 	constructor => '_real_new',
@@ -22,6 +22,7 @@ use Class::XSAccessor {
 };
 
 use Data::Dumper;
+use base qw(Hash::Registry::Feature::KeyTyped);
 
 ################################################################################
 ################################################################################
@@ -52,15 +53,44 @@ sub new {
 
 sub delete_value {
 	my ($self,$value) = @_;
+	return unless defined $value;
 	my $vstring = $value + 0;
 	
+	my $prev = Dumper($self);
 	foreach my $ko (values %{ $self->reverse->{$vstring} }) {
+		if(!defined $ko) {
+			log_err("State of table when entering this function");
+			print $prev;
+			log_err("Current state");
+			print Dumper($self);
+			die "Found stale key object!";
+		}
 		$ko->unlink_value($value);
 	}
 	
-	$self->dref_del_ptr($value, $self->reverse);
+	$self->dref_del_ptr($value, $self->reverse, $value + 0);
 	delete $self->reverse->{$vstring};
 	return $value;
+}
+
+#Not fully implemented
+sub exchange_value {
+	my ($self,$old,$new) = @_;
+	my $olds = $old+0;
+	my $news = $new + 0;
+	die "Can't switch to existing value!" if exists $self->reverse->{$news};
+	
+	return unless exists $self->reverse->{$olds};
+	
+	my $newh = {};
+	my $oldh = $self->reverse->{$olds};
+	$self->reverse->{$news} = $newh;
+	
+	while (my ($kaddr,$kobj) = each %$oldh) {
+		$newh->{$kaddr} = $kobj;
+		$kobj->exchange_value($old,$new);
+		delete $oldh->{$kaddr};
+	}
 }
 
 sub register_kt {
@@ -69,8 +99,8 @@ sub register_kt {
 		$self->keytypes({});
 	}
 	$id_prefix ||= $kt;
-	die "Must have id prefix" unless $id_prefix;
 	if(!exists $self->keytypes->{$kt}) {
+		#log_info("Registering CONST=$kt PREFIX=$id_prefix");
 		$self->keytypes->{$kt} = $id_prefix;
 	}
 }
@@ -80,9 +110,9 @@ sub maybe_cleanup_value {
 	my $v_rhash = $self->reverse->{$value+0};
 	if(!scalar %$v_rhash) {
 		delete $self->reverse->{$value+0};
-		$self->dref_del_ptr($value, $self->reverse);
+		$self->dref_del_ptr($value, $self->reverse, $value + 0);
 	} else {
-		log_warn(scalar %$v_rhash);
+		#log_warn(scalar %$v_rhash);
 	}
 }
 
@@ -101,6 +131,7 @@ sub has_key {
 
 sub has_value {
 	my ($self,$value) = @_;
+	return 0 if !defined $value;
 	$value = $value + 0;
 	return exists $self->reverse->{$value};
 }
@@ -149,15 +180,14 @@ sub ukey2ikey {
 }
 
 sub store {
-	my ($self,$simple_scalar,$value,%options) = @_;
-	my $o = $self->ukey2ikey($simple_scalar,
+	my ($self,$ukey,$value,%options) = @_;
+	my $o = $self->ukey2ikey($ukey,
 		Create => 1,
-		O_EXCL => $value
+		O_EXCL => $value,
+		%options
 	);
-	
 	my $vstring = $value+0;
 	my $kstring = $o->kstring;
-	#log_err($kstring);
 	$self->reverse->{$vstring}->{$kstring} = $o;
 	$self->forward->{$kstring} = $value;
 	
@@ -174,6 +204,7 @@ sub store {
 
 sub fetch {
 	my ($self,$simple_scalar) = @_;
+	#log_info("called..");
 	my $o = $self->ukey2ikey($simple_scalar);
 	return unless $o;
 	return $self->forward->{$o->kstring};
@@ -199,7 +230,7 @@ sub delete_key_lookup {
 	if(!keys %{$self->reverse->{$vstr}}) {
 		
 		delete $self->reverse->{$vstr};
-		$self->dref_del_ptr($stored, $self->reverse);
+		$self->dref_del_ptr($stored, $self->reverse, $stored+0);
 		
 	}
 	
@@ -231,7 +262,9 @@ sub new_attr {
 sub attr_get {
     my ($self,$attr,$t,%options) = @_;
 	my $attr_s = ref $attr ? $attr + 0 : $attr;
-    my $ustr = $self->keytypes->{$t} . $attr_s;
+	my $attr_t = $self->keytypes->{$t};
+	die "Unknown attribute type '$t'" unless $attr_t;
+    my $ustr = $attr_t . $attr_s;
     my $aobj = $self->attr_lookup->{$ustr};
     return $aobj if $aobj;
     
@@ -246,15 +279,20 @@ sub attr_get {
 		$aobj->weaken_encapsulated();
         weaken($self->attr_lookup->{$ustr} = $aobj);
     }
+	#log_err("Stored $attr:$t");
     return $aobj;
 }
 
 sub store_a {
     my ($self,$attr,$t,$value,%options) = @_;
     
-    my $aobj = $self->attr_get($attr, $t, Create => 1);    
+    my $aobj = $self->attr_get($attr, $t, Create => 1);
+	if(!$value) {
+		log_err(@_);
+		die "NULL Value!";
+	}
     my $vaddr = $value + 0;
-    
+    #log_warn("STORING $t:$attr:$value");
     weaken($self->reverse->{$vaddr}->{$aobj+0} = $aobj);
     
     if(!$options{StrongValue}) {
@@ -276,26 +314,39 @@ sub store_a {
 sub fetch_a {
     my ($self,$attr,$t) = @_;
     my $aobj = $self->attr_get($attr, $t);
-    return unless $aobj;
-    values %{$aobj->get_hash};
+	if(!$aobj) {
+		#log_err("Can't find attribute object! ($attr:$t)");
+		#print Dumper($self->attr_lookup);
+		return;
+	}
+	my @ret;
+	return @ret unless $aobj;
+	@ret = values %{$aobj->get_hash};
+	return @ret;
 }
 
 sub delete_value_by_attr {
     my ($self,$attr,$t) = @_;
-    my $value = $self->fetch_a($attr, $t);
-    return unless $value;
-    $self->delete_value($value);
+    my @values = $self->fetch_a($attr, $t);
+    $self->delete_value($_) foreach @values;
+	return @values;
 }
 
 sub delete_attr_from_value {
     my ($self,$attr,$t,$value) = @_;
     my $aobj = $self->attr_get($attr, $t);
+	if(!$aobj) {
+		log_err("Can't find attribute for $t$attr");
+		return;
+	}
+	log_errf("DELATTR: A=%d V=%d", $aobj+0, $value+0);
     return unless $aobj;
-    if(!delete $aobj->get_hash->{$value+0}) {
-        return;
-    }
+	my $attrhash = $aobj->get_hash;
+	delete $attrhash->{$value+0};
 	delete $self->reverse->{$value+0}->{$aobj+0};
-    $self->dref_del_ptr($value, $aobj->get_hash);
+	$self->dref_del_ptr($value, $attrhash, $value+0);
+	
+	$aobj->unlink_value($value);
 	$self->maybe_cleanup_value($value);
 }
 
@@ -306,7 +357,7 @@ sub delete_attr_from_all {
     return unless $aobj;
 	
 	while (my ($k,$v) = each %$attrhash) {
-		$self->dref_del_ptr($v, $attrhash);
+		$self->dref_del_ptr($v, $attrhash, $v+0);
 		delete $attrhash->{$k};
 		delete $self->reverse->{$v+0}->{$aobj+0};
 		$self->maybe_cleanup_value($v);

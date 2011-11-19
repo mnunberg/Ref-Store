@@ -12,6 +12,12 @@ sub new {
     bless $self, $cls;
 }
 
+sub reset_counter {
+    my $self = shift;
+    no strict 'refs';
+    ${ref($self) . "::Counter" } = 0;
+}
+
 @ValueObject::ISA = qw(_ObjBase);
 @KeyObject::ISA = qw(_ObjBase);
 
@@ -153,8 +159,46 @@ sub test_object_attr {
         $hash->store_a($tmpattr, $t, $v);
     }
     ok(!$hash->has_value($v), "Attribute object GC");
+    
+    #Test value GC
+    $attr = KeyObject->new();
+    $hash->store_a($attr, $t, $v);
+    undef $v;
+    ok(!($hash->has_value($v)||$hash->has_attr($attr,$t)),
+       "Attribute object Value GC");
     #print Dumper($hash);
-    #log_err("Hi!");
+}
+
+use constant {
+    ATTR_FOO => '_attr_foo',
+    ATTR_BAR => '_attr_bar',
+    KEY_GAH  => '_key_gah',
+    KEY_MEH  => '_key_meh'
+};
+sub test_chained_basic {
+    my $hash = $Impl->new();
+    
+    ValueObject->reset_counter();
+    KeyObject->reset_counter();
+    
+    my $nested_obj = ValueObject->new();
+    my $key = 'first_key';
+    
+    $hash->store($key, $nested_obj);
+    my $second_obj = ValueObject->new();
+    $hash->store($nested_obj, $second_obj, StrongValue => 1);
+    my $third_obj = ValueObject->new();
+    $hash->store($second_obj, $third_obj, StrongValue => 1);
+    $hash->register_kt(ATTR_FOO);
+    $hash->register_kt(ATTR_BAR);
+    $hash->store_a("1", ATTR_FOO, $third_obj);
+    $hash->store_a("1", ATTR_FOO, $nested_obj);
+    $hash->store_a("1", ATTR_BAR, $second_obj);
+    $hash->store_a("1", ATTR_BAR, $third_obj);
+    #undef $nested_obj;
+    undef $second_obj;
+    undef $third_obj;
+    #print Dumper($hash);
 }
 
 sub test_all {
@@ -165,6 +209,7 @@ sub test_all {
     test_object_keys2();
     test_scalar_attr();
     test_object_attr();
+    test_chained_basic();
     done_testing();
 }
 1;

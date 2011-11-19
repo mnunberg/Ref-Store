@@ -45,13 +45,13 @@ sub trigger_fire {
 }
 
 sub hr_pp_trigger_unregister {
-    my ($ref,$what) = @_;
+    my ($ref,$what,$mkey) = @_;
     my $actions = &getdata($ref, $Wizard);
     return unless $actions;
     my $i = $#{$actions};
     while($i >= 0) {
         my ($key,$target) = @{$actions->[$i]};
-        if(defined $target && $target eq $what) {
+        if(defined $target && $target eq $what && $key eq $mkey) {
             splice(@{$actions}, $i);
             last;
         }
@@ -84,7 +84,8 @@ sub hr_pp_trigger_register {
     
     foreach (@$data) {
         my ($ekey,$etarget) = @$_;
-        if ($target == $etarget) {
+        if (defined $etarget && defined $ekey &&
+            $target == $etarget && $key eq $ekey) {
             #log_warn("DUP!");
             return;
         }

@@ -43,7 +43,7 @@ sub new {
     @{$self}[HR_KFLD_STRSCALAR, HR_KFLD_REFSCALAR, HR_KFLD_TABLEREF] =
         ($obj+0, $obj, $table);
     
-    
+    log_err("Creating new encapsulating key for object", $obj+0);
     hr_pp_trigger_register($obj, $obj+0, $table->scalar_lookup);
     
     weaken($table->scalar_lookup->{$obj+0} = $self);
@@ -62,8 +62,18 @@ sub link_value {
 sub unlink_value {
     my ($self,$value) = @_;
     my $obj = $self->[HR_KFLD_REFSCALAR];
-    hr_pp_trigger_unregister($obj, $self->[HR_KFLD_TABLEREF]->reverse->{$value+0});
+    hr_pp_trigger_unregister($obj,
+                             $self->[HR_KFLD_TABLEREF]->reverse->{$value+0},
+                             $obj + 0
+                             );
 }
+
+sub exchange_value {
+    my ($self,$old,$new) = @_;
+    $self->unlink_value($old);
+    $self->link_value($new);
+}
+
 
 sub weaken_encapsulated {
     my $self = shift;
@@ -98,7 +108,7 @@ sub DESTROY {
     
     if($obj) {
         #log_info("Unregistering triggers on $obj");
-        hr_pp_trigger_unregister($obj, $table->scalar_lookup);
+        hr_pp_trigger_unregister($obj, $table->scalar_lookup, $obj_s);
         #hr_pp_trigger_unregister($obj, $table->forward);
         #log_info("Done");
     }
@@ -109,7 +119,7 @@ sub DESTROY {
     my $stored_privhash = $table->reverse->{$stored+0};
     
     if($stored && $obj) {
-        hr_pp_trigger_unregister($obj, $stored_privhash);
+        hr_pp_trigger_unregister($obj, $stored_privhash, $obj_s);
     }
     
     #log_info("STRSCALAR=", $self->[HR_KFLD_STRSCALAR]);
@@ -118,11 +128,12 @@ sub DESTROY {
     if(!scalar %$stored_privhash) {
         #log_info("Table empty!");
         delete $table->reverse->{$stored+0};
-        hr_pp_trigger_unregister($stored, $table->reverse);
-    } else {
-        print Dumper($stored_privhash);
-        Dump($stored_privhash);
+        hr_pp_trigger_unregister($stored, $table->reverse, $obj_s);
     }
+    #else {
+    #    print Dumper($stored_privhash);
+    #    Dump($stored_privhash);
+    #}
     #log_info("Done");
 }
 
@@ -164,8 +175,8 @@ sub dref_add_ptr {
 }
 
 sub dref_del_ptr {
-    my ($self,$value,$target) = @_;
-    hr_pp_trigger_unregister($value,$target);
+    my ($self,$value,$target,$mkey) = @_;
+    hr_pp_trigger_unregister($value,$target,$mkey);
 }
 
 1;

@@ -60,7 +60,8 @@ sub new {
     @{$self}[HR_KFLD_STRSCALAR, HR_KFLD_REFSCALAR,
             HR_KFLD_TABLEREF, HR_KFLD_LOOKUP, HR_KFLD_TIEOBJ] =
         ($scalar, $ref, $table, $href, \%h);
-        
+    
+    log_errf("(%d) ATTR[%s %s]",$self,  $scalar, $ref);
     return $self;
 }
 
@@ -68,10 +69,21 @@ sub link_value { }
 
 sub unlink_value {
     my ($self,$value) = @_;
-    return unless delete $self->[HR_KFLD_LOOKUP]->[0]->{$value+0};
-    
+    return unless delete $self->[HR_KFLD_TIEOBJ]->{$value+0};    
     $self->[HR_KFLD_TABLEREF]->dref_del_ptr(
-        $value, $self->[HR_KFLD_LOOKUP]->[0]);
+        $value,
+        $self->[HR_KFLD_LOOKUP]->[0],
+        $value + 0,
+    );
+}
+
+sub exchange_value {
+    my ($self,$old,$new);
+    $self->[HR_KFLD_LOOKUP]->[0]->{$new+0} = $new;
+    delete $self->[HR_KFLD_LOOKUP]->[0]->{$old+0};
+    $self->[HR_KFLD_TABLEREF]->dref_del_ptr(
+        $old, $self->[HR_KFLD_LOOKUP]->[0]
+    )
 }
 
 sub weaken_encapsulated {
@@ -92,13 +104,18 @@ sub get_hash {
 }
 
 sub DESTROY {
-    my $h = $_[0]->[HR_KFLD_LOOKUP]->[0];
-    my $table = $_[0]->[HR_KFLD_TABLEREF];
+    my $self = shift;
+    #log_errf("%d: BYE", $self+0);
+    my $h = $self->[HR_KFLD_LOOKUP]->[0];
+    my $table = $self->[HR_KFLD_TABLEREF];
     return unless $table;
-
-    map { $table->dref_del_ptr($_, $h) } values %$h;
-    #log_err("DELETING USTR:", $_[0]->[HR_KFLD_STRSCALAR]);
-    delete $table->attr_lookup->{ $_[0]->[HR_KFLD_STRSCALAR] };
+    #log_err("Will iterate over contained values..");
+    foreach my $v (values %$h) {
+        log_errf("Deleting reverse entry %d { %d }", $v+0, $self+0);
+        delete $table->reverse->{$v+0}->{$self+0};
+        $table->dref_del_ptr($v, $h, $v+0);
+    }
+    delete $table->attr_lookup->{ $self->[HR_KFLD_STRSCALAR] };
 }
 
 package Hash::Registry::Attribute::Encapsulating;
@@ -112,9 +129,25 @@ use Log::Fu;
 sub new {
     my ($cls,$astr,$encapsulated,$table) = @_;
     my $self = $cls->SUPER::new($astr, $encapsulated, $table);
+    $self->_init_encapsulated($encapsulated, $astr, $table);
+    return $self;
+}
+
+sub _init_encapsulated {
+    my ($self,$encapsulated,$astr,$table) = @_;
     $table->dref_add_str($encapsulated, $table->attr_lookup, $astr);
     $table->dref_add_str($encapsulated, $self->[$self->HR_KFLD_LOOKUP], "1");
-    return $self;
+}
+
+sub _deinit_encapsulated {
+    my $self = shift;
+    return unless $self->[HR_KFLD_REFSCALAR];
+    my $table = $self->[HR_KFLD_TABLEREF];
+    my $encap = $self->[HR_KFLD_REFSCALAR];
+    my $astr = $self->[HR_KFLD_STRSCALAR];
+    
+    $table->dref_del_ptr($encap, $table->attr_lookup, $astr);
+    $table->dref_del_ptr($encap, $self->[$self->HR_KFLD_LOOKUP], "1");
 }
 
 sub weaken_encapsulated {
@@ -138,24 +171,31 @@ sub DESTROY {
     use Data::Dumper;
     $self->SUPER::DESTROY();
     my $table = $self->[HR_KFLD_TABLEREF];
+    my $astr = $self->[HR_KFLD_STRSCALAR];
     if($self->[HR_KFLD_REFSCALAR]) {
         
         #Remove dref from encapsulated object.
         $table->dref_del_ptr(
-            $self->[HR_KFLD_REFSCALAR], $table->attr_lookup);
+            $self->[HR_KFLD_REFSCALAR],
+            $table->attr_lookup,
+            $astr,
+            );
         
         $table->dref_del_ptr(
-            $self->[HR_KFLD_REFSCALAR], $self->[$self->HR_KFLD_LOOKUP]);
+            $self->[HR_KFLD_REFSCALAR],
+            $self->[$self->HR_KFLD_LOOKUP],
+            "1"
+        );
         
     }
     
     while (my ($k,$v) = each %{$self->[$self->HR_KFLD_LOOKUP]->[0] }) {
         my $vhash = $table->reverse->{$k};
         delete $vhash->{$self+0};
-        $table->dref_del_ptr($v, $self->get_hash);
+        $table->dref_del_ptr($v, $self->get_hash, $v + 0);
         if(! scalar %$vhash) {
             delete $table->reverse->{$k};
-            $table->dref_del_ptr($v, $table->reverse);
+            $table->dref_del_ptr($v, $table->reverse, $v + 0);
         }
     }
 }

@@ -2,32 +2,44 @@ package Hash::Registry::Feature::KeyTyped;
 use strict;
 use warnings;
 our $AUTOLOAD;
+use Log::Fu;
+use Carp qw(confess);
+use Data::Dumper;
 
+$SIG{__DIE__} = \&confess;
 BEGIN {
 	foreach my $fname (qw(
 		store
 		fetch
 		delete_key_lookup
-		delete_value
+		delete_value_by_key
 	)) {
 		my $wrapname = $fname . "_kt";
 		{
 			no strict 'refs';
 			*{$wrapname} = sub {
 				my @args = @_;
-				my $self = $args[1];
-				my $ktarg = splice(@_, 2);
-				my $pfix = $self->get_kt_prefix($ktarg, "$fname: Can't find prefix!");
+				my $self = $args[0];
+				#print Dumper(\@args);
+				my ($ktarg) = splice(@args, 2, 1);
+				#log_err($ktarg);
+				#log_err(@args);
+				my $pfix = $self->get_kt_prefix($ktarg, "$fname: Can't find prefix ($ktarg)!");
 				my $orig = $args[1];
-				$args[1] = $pfix.$orig;
-				
+				die "Must have defined key!" unless defined $orig;
+				if(!ref $orig) {
+					$orig = $pfix . $orig;
+					$args[1] = $orig;
+				} else {
+					log_warn("Using keytypes with object key has no effect");
+				}
 				shift @args;
-				$self->$fname(@args);
+				#print Dumper($self);
+				return $self->$fname(@args);
 			};
 		}
 	}
 }
-
 
 sub get_kt_prefix {
 	my ($self,$kt,$do_die) = @_;
@@ -35,5 +47,6 @@ sub get_kt_prefix {
 	if((!$ret) && $do_die) {
 		die $do_die;
 	}
+	return $ret;
 }
 1;

@@ -1,7 +1,9 @@
 #ifndef HREG_H_
 #define HREG_H_
 
-#include <perl.h>
+#include "EXTERN.h"
+#include "perl.h"
+#include "XSUB.h"
 #include <stdint.h>
 
 //#define HR_DEBUG
@@ -120,12 +122,27 @@ HR_free_action(HR_Action *action);
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
-void HR_PL_add_actions(SV* objref, char *actions);
-void HR_PL_del_action(SV* objref, SV *hashref);
 HREG_API_INTERNAL
 void HR_add_actions_real(SV *objref, HR_Action *actions);
 
+/*Perl API*/
+
+void HR_PL_add_actions(SV* objref, char *actions);
+void HR_PL_del_action(SV* objref, SV *hashref);
 void HR_PL_add_action_ptr(SV *objref, SV *hashref);
 void HR_PL_add_action_str(SV *objref, SV *hashref, const char *key);
 
-#endif
+SV*  HRXSK_new(char *package, char *key, SV *forward, SV *scalar_lookup);
+char *HRXSK_kstring(SV* self);
+
+SV* HRXSK_encap_new(char *package, SV *encapsulated_object,
+                    SV *table, SV *forward, SV *scalar_lookup);
+
+UV HRXSK_encap_kstring(SV *ksv_ref);
+void HRXSK_encap_weaken(SV *ksv_ref);
+void HRXSK_encap_link_value(SV *self, SV *value);
+
+/*New key object..*/
+
+
+#endif /*HREG_H_*/
