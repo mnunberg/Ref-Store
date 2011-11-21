@@ -150,6 +150,7 @@ sub test_object_attr {
     ok(!($hash->has_attr($attr,$t)||$hash->has_value($v)), "Object attribute deletion");
     #print Dumper($hash);
     
+    
     diag "Destroying $attr";
     undef $attr;
     
@@ -184,21 +185,38 @@ sub test_chained_basic {
     my $nested_obj = ValueObject->new();
     my $key = 'first_key';
     
-    $hash->store($key, $nested_obj);
-    my $second_obj = ValueObject->new();
-    $hash->store($nested_obj, $second_obj, StrongValue => 1);
-    my $third_obj = ValueObject->new();
-    $hash->store($second_obj, $third_obj, StrongValue => 1);
-    $hash->register_kt(ATTR_FOO);
-    $hash->register_kt(ATTR_BAR);
-    $hash->store_a("1", ATTR_FOO, $third_obj);
-    $hash->store_a("1", ATTR_FOO, $nested_obj);
-    $hash->store_a("1", ATTR_BAR, $second_obj);
-    $hash->store_a("1", ATTR_BAR, $third_obj);
-    #undef $nested_obj;
-    undef $second_obj;
-    undef $third_obj;
+    {
+        $hash->store($key, $nested_obj);
+        my $second_obj = ValueObject->new();
+        $hash->store($nested_obj, $second_obj, StrongValue => 1);
+        my $third_obj = ValueObject->new();
+        $hash->store($second_obj, $third_obj, StrongValue => 1);
+        $hash->register_kt(ATTR_FOO);
+        $hash->register_kt(ATTR_BAR);
+        $hash->store_a("1", ATTR_FOO, $third_obj);
+        $hash->store_a("1", ATTR_FOO, $nested_obj);
+        $hash->store_a("1", ATTR_BAR, $second_obj);
+        $hash->store_a("1", ATTR_BAR, $third_obj);
+    }
+    $Data::Dumper::Useqq = 1;
     #print Dumper($hash);
+    print $hash->dump();
+    undef $nested_obj;
+    ok($hash->is_empty(), "Nested deletion OK");
+    #undef $second_obj;
+    #undef $third_obj;
+    #print Dumper($hash);
+}
+
+sub test_oexcl {
+    my $h = $Impl->new();
+    my $v = \time();
+    $h->store("foo", $v);
+    my $v2 = \time();
+    eval {
+        $h->store("foo", $v2);
+    };
+    ok($@, "Error for duplicate insertion ($@)");
 }
 
 sub test_all {
@@ -210,6 +228,7 @@ sub test_all {
     test_scalar_attr();
     test_object_attr();
     test_chained_basic();
+    test_oexcl();
     done_testing();
 }
 1;

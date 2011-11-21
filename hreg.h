@@ -141,6 +141,7 @@ SV* HRXSK_encap_new(char *package, SV *encapsulated_object,
 UV HRXSK_encap_kstring(SV *ksv_ref);
 void HRXSK_encap_weaken(SV *ksv_ref);
 void HRXSK_encap_link_value(SV *self, SV *value);
+SV*  HRXSK_encap_getencap(SV *self);
 
 /*New key object..*/
 

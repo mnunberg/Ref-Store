@@ -11,8 +11,9 @@ BEGIN {
 	foreach my $fname (qw(
 		store
 		fetch
-		delete_key_lookup
-		delete_value_by_key
+		purgeby
+		unlink
+		lexists
 	)) {
 		my $wrapname = $fname . "_kt";
 		{

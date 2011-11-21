@@ -61,7 +61,7 @@ sub new {
             HR_KFLD_TABLEREF, HR_KFLD_LOOKUP, HR_KFLD_TIEOBJ] =
         ($scalar, $ref, $table, $href, \%h);
     
-    log_errf("(%d) ATTR[%s %s]",$self,  $scalar, $ref);
+    #log_errf("(%d) ATTR[%s %s]",$self,  $scalar, $ref);
     return $self;
 }
 
@@ -103,6 +103,19 @@ sub get_hash {
     $_[0]->[HR_KFLD_TIEOBJ];
 }
 
+sub kstring {
+    my $self = shift;
+    $self->[HR_KFLD_STRSCALAR];
+}
+
+sub dump {
+    my ($self,$hrd) = @_;
+    my $h = $self->[HR_KFLD_LOOKUP]->[0];
+    foreach my $v (values %$h) {
+        $hrd->iprint("V: %s", $hrd->fmt_ptr($v));
+    }
+}
+
 sub DESTROY {
     my $self = shift;
     #log_errf("%d: BYE", $self+0);
@@ -111,7 +124,7 @@ sub DESTROY {
     return unless $table;
     #log_err("Will iterate over contained values..");
     foreach my $v (values %$h) {
-        log_errf("Deleting reverse entry %d { %d }", $v+0, $self+0);
+        #log_errf("Deleting reverse entry %d { %d }", $v+0, $self+0);
         delete $table->reverse->{$v+0}->{$self+0};
         $table->dref_del_ptr($v, $h, $v+0);
     }
@@ -163,6 +176,12 @@ sub link_value {
     $self->[HR_KFLD_TABLEREF]->dref_add_str(
         $self->[HR_KFLD_REFSCALAR], $vhash, $self + 0
     );
+}
+
+sub dump {
+    my ($self,$hrd) = @_;
+    $hrd->iprint("ENCAP: %s", $self->[HR_KFLD_REFSCALAR]);
+    $self->SUPER::dump($hrd);
 }
 
 sub DESTROY {

@@ -19,5 +19,6 @@ our @EXPORT = qw(
     HRXSK_encap_kstring
     HRXSK_encap_weaken
     HRXSK_encap_link_value
+    HRXSK_encap_getencap
 );
 1;

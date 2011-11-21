@@ -215,9 +215,9 @@ trigger_and_free_action(HR_Action *action_list)
 						hv_delete((HV*)container, ptr_s, strlen(ptr_s), G_DISCARD);
 					} else { /*DEL_AV*/
 						HR_DEBUG("Clearing idx=%d from AV=%p", action_list->key, container);
-						if(av_exists( (AV*)container, action_list->key )) {
-							HR_DEBUG("idx=%d exists", action_list->key);
-							sv_setsv(*(av_fetch((AV*)container, action_list->key, 1)),
+						if(av_exists( (AV*)container, (I32)action_list->key )) {
+							HR_DEBUG("idx=%d exists", (I32)action_list->key);
+							sv_setsv(*(av_fetch((AV*)container, (I32)action_list->key, 1)),
 									 &PL_sv_undef);
 						}
 					}

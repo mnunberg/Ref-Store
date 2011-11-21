@@ -22,6 +22,11 @@ use Hash::Registry::XS::cfunc;
 *kstring = \&HRXSK_encap_kstring;
 sub unlink_value { warn "This needs to be implmemented"; }
 
+sub dump {
+    my ($self,$hrd) = @_;
+    $hrd->iprint("ENCAP: %s", $hrd->fmt_ptr($self->HRXSK_encap_getencap));
+}
+
 package Hash::Registry::XS;
 use strict;
 use warnings;
@@ -55,5 +60,6 @@ sub dref_del_ptr {
     my ($self,$value,$hashref) = @_;
     HR_PL_del_action($value, $hashref);
 }
+
 
 1;

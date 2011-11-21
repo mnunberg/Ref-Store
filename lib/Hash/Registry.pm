@@ -5,6 +5,8 @@ use Scalar::Util qw(weaken);
 
 use Hash::Registry::Common;
 use Hash::Registry::Attribute;
+use Hash::Registry::Dumper;
+
 our $VERSION = '0.01';
 use Log::Fu { level => "debug" };
 use Class::XSAccessor {
@@ -149,6 +151,8 @@ sub has_key {
 	return (exists $self->forward->{$key} || exists $self->scalar_lookup->{$key});
 }
 
+*lexists = \&has_key;
+
 sub has_value {
 	my ($self,$value) = @_;
 	return 0 if !defined $value;
@@ -156,11 +160,43 @@ sub has_value {
 	return exists $self->reverse->{$value};
 }
 
+sub vlookups {
+	my ($self,$value) = @_;
+	my @ret;
+	$value = $value + 0;
+	my $vhash = $self->reverse->{$value};
+	$vhash ||= {};
+	foreach my $ko (values %$vhash) {
+		push @ret, $ko->kstring;
+	}
+	return @ret;
+}
+
+*vexists = \&has_value;
+
 sub has_attr {
 	my ($self,$attr,$t) = @_;
 	$self->attr_get($attr, $t);
 }
 
+sub is_empty {
+	my $self = shift;
+	%{$self->scalar_lookup} == 0
+		&& %{$self->reverse} == 0
+		&& %{$self->forward} == 0
+		&& %{$self->attr_lookup} == 0;
+}
+
+sub dump {
+	my $self = shift;
+	my $dcls = "Hash::Registry::Dumper";
+	my $hrd = $dcls->new();
+	#my $hrd = Hash::Registry::Dumper->new();
+	#log_err($hrd);
+	$hrd->dump($self);
+	$hrd->flush();
+	#print Dumper($self);
+}
 ################################################################################
 ################################################################################
 ################################################################################
@@ -182,7 +218,7 @@ sub ukey2ikey {
 	#log_info($ustr);
 	my $o = $self->scalar_lookup->{$ustr};
 	if($expected && $o) {
-		my $existing = $self->forward->{$self->KString($o)};
+		my $existing = $self->forward->{$o->kstring};
 		if($existing && $expected != $existing) {
 			die "Request O_EXCL for new key ${\$o->kstring} => $expected but key ".
 			"is already tied to $existing";
@@ -267,7 +303,10 @@ sub purgeby_sk {
 	$self->purge($value);
 	return $value;
 }
+
 *purgeby = \&purgeby_sk;
+
+*lexists_sk = \&lexists;
 
 ################################################################################
 ################################################################################
@@ -363,7 +402,7 @@ sub dissoc_a {
 		log_err("Can't find attribute for $t$attr");
 		return;
 	}
-	log_errf("DELATTR: A=%d V=%d", $aobj+0, $value+0);
+	#log_errf("DELATTR: A=%d V=%d", $aobj+0, $value+0);
     return unless $aobj;
 	my $attrhash = $aobj->get_hash;
 	delete $attrhash->{$value+0};
@@ -387,6 +426,8 @@ sub unlink_a {
 		$self->maybe_cleanup_value($v);
 	}
 }
+
+*lexists_a = \&has_attr;
 
 1;
 
@@ -413,6 +454,10 @@ This module is not designed for the simple one-off script or module. For most
 applications there is no true need to have multiple dynamically associated and
 deleted object entries. The benefits of this module become apparent in design
 and ease of use when larger and more complex, event-oriented systems are in use.
+
+In shorter terms, this module allows you to reliably use a I<Single Source Of Truth>
+for your object lookups. There is no need to synchronize multiple lookup tables
+to ensure that there are no dangling references to an object you should have deleted
 
 Thus, instead of a simple synopsis, I will try to dissect and pseudo-refactor
 the code in L<POE::Component::Client::HTTP> (refered to as poco-http)
@@ -620,7 +665,7 @@ references, this provides a lot of flexibility
 
 There are three common lookup types by which values can be indexed and mapped to.
 
-A <Lookup Type> is just an identifier by which one can fetch and store a value.
+A B<Lookup Type> is just an identifier by which one can fetch and store a value.
 The uniqueness of identifiers is dependent on the lookup type. Performance for various
 lookup types varies.
 
@@ -681,7 +726,9 @@ this to true will disable this behavior and not weaken the value object.
 
 =back
 
-This method is also available as C<store_sk>
+This method is also available as C<store_sk>.
+
+It is an error to call this method twice on the same lookup <-> value specification.
 
 =item fetch($key)
 
@@ -699,8 +746,9 @@ Also available as C<unlink_sk>
 
 
 =item purgeby($key)
+
 If C<$key> is linked to a value, then that value is removed from the database via
-L</purge>
+L</purge>. Also available as C<purgeby_sk>
 
 =back
 
@@ -765,8 +813,8 @@ allows for a one-to-many relationship between a lookup index and its correspondi
 value.
 
 The common lookup API still applies. Attributes must be typed, and therefore
-all attributes must have a type, and all API functions requiring a key will also
-require a type.
+all attribute functions must have a type as their second argument.
+
 A suffix of C<_a> is appended to all API functions.
 In addition, the following differences in behavior and options exist
 
@@ -782,6 +830,14 @@ if C<StrongAttr> was not specified during I<any> insertion operation.
 
 Fetch function returns an I<array> of values, and not a single value.
 
+thus:
+	
+	my $value = $hash->fetch($key);
+	#but
+	my @values = $hash->fetch_a($attr,$type);
+	
+However, storing an attribute is done only one value at a time.
+
 =item dissoc_a($attr, $type, $value)
 
 Dissociates an attribute lookup from a single value. This function is special
@@ -794,6 +850,33 @@ same attribute, this can potentially remove many values from the DB. Be sure to
 use this function with caution
 
 =back
+
+It is possible to use attributes as tags for boolean values or flags, though the
+process right now is somewhat tedious (eventually this API will be extended to allow
+less boilerplate)
+
+	use constant ATTR_FREE => "attr_free";
+	use constant ATTR_BUSY => "attr_busy";
+	
+	$hash->register_kt(ATTR_FREE);
+	$hash->register_kt(ATTR_BUSY);
+	
+	$hash->store_a(1, ATTR_FREE, $value); #Value is now tagged as 'free';
+	
+	#to mark the value as busy, be sure to inclusively mark the busy tag first,
+	#and then remove the 'free' mark. otherwise the value will be seen as destroyed
+	#and associated references removed:
+	
+	$hash->store_a(1, ATTR_BUSY, $value);
+	$hash->dissoc_a(1, ATTR_FREE, $value);
+	
+	#mark as free again:
+	
+	$hash->store_a(1, ATTR_FREE, $value);
+	$hash->dissoc_a(1, ATTR_BUSY, $value);
+	
+The complexities come from dealing with a triadic value for a tag. A tag for a value
+can either be true, false, or unset. so C<0, ATTR_FREE> is valid as well.
 
 =back
 
@@ -813,5 +896,50 @@ This function is responsible for converting a key to something 'unique'. The
 default implementation checks to see whether the key is a reference, and if so
 uses its address, otherwise it uses the stringified value. It takes the user key
 as its argument
+
+=back
+
+Hash::Registry will try and select the best implementation (C<Hash::Registry::XS>
+and C<Hash::Registry::PP>, in that order). You can override this by seting
+C<$Hash::Registry::SelectedImpl> to a package of your choosing (which must be
+loaded).
+
+=back
+
+=head2 DEBUGGING
+
+Often it is helpful to know what the table is holding and indexing, possibly because
+there is a bug or because you have forgotten to delete something.
+
+The following functions are available for debugging
+
+=over
+
+=item vexists($value)
+
+Returns true if C<$value> exists in the database. The database internally maintains
+a hash of values. When functioning properly, a value should never exist without
+a key lookup, but this is still alpha software
+
+=item vlookups($value)
+
+Returns an array of stringified lookups for which this value is registered
+
+=item lexists(K)
+
+Returns true if the lookup C<K> exists. See the L</API> section for lookup-specific
+parameters for C<K>
+
+=item is_empty
+
+Returns true if there are no lookups and no values in the database
+
+=item dump
+
+Prints a tree-like representation of the database. This will recurse the entire
+database and print information about all values and all lookup types. In addition,
+for object references, it will print the reference address in decimal and hexadecimal,
+the actual SV address of the reference, and whether the reference is a weak
+reference.
 
 =back

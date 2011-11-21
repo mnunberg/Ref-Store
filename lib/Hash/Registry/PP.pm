@@ -43,7 +43,7 @@ sub new {
     @{$self}[HR_KFLD_STRSCALAR, HR_KFLD_REFSCALAR, HR_KFLD_TABLEREF] =
         ($obj+0, $obj, $table);
     
-    log_err("Creating new encapsulating key for object", $obj+0);
+    #log_err("Creating new encapsulating key for object", $obj+0);
     hr_pp_trigger_register($obj, $obj+0, $table->scalar_lookup);
     
     weaken($table->scalar_lookup->{$obj+0} = $self);
@@ -84,6 +84,11 @@ sub weaken_encapsulated {
 sub kstring {
     my $self = shift;
     $self->[HR_KFLD_STRSCALAR];
+}
+
+sub dump {
+    my ($self,$hrd) = @_;
+    $hrd->iprint("ENCAP: %s", $hrd->fmt_ptr($self->[HR_KFLD_REFSCALAR]));
 }
 
 #This is called:

@@ -98,11 +98,8 @@ static void k_encap_cleanup(SV *ksv)
         hv_delete( REF2HASH(*stored_reverse), ksv_s, strlen(ksv_s), G_DISCARD);
         
         SV* reverse_count = hv_scalar(REF2HASH(*stored_reverse));
-        
-        IV real_count = SvIV(reverse_count);
-        HR_DEBUG("Have count=%lu", real_count);
-        
-        if(!real_count) {
+                
+        if(!SvTRUE(reverse_count)) {
             HR_DEBUG("Removing value's reverse hash");
             hv_delete( REF2HASH(reverse), stored_s, strlen(stored_s), G_DISCARD);
             HR_PL_del_action(*stored, reverse);
@@ -129,9 +126,14 @@ void HRXSK_encap_weaken(SV *ksv_ref)
 UV HRXSK_encap_kstring(SV* ksv_ref)
 {
     hrk_encap *ke = (hrk_encap*)SvPV_nolen(SvRV(ksv_ref));
-    return SvRV(ke->obj_ptr);
+    return (UV)SvRV(ke->obj_ptr);
 }
 
+SV *HRXSK_encap_getencap(SV *ksv_ref)
+{
+    hrk_encap *ke = (hrk_encap*)SvPV_nolen(SvRV(ksv_ref));
+    newSVsv(ke->obj_ptr);
+}
 
 SV* HRXSK_encap_new(char *package, SV* object, SV *table, SV* forward, SV* scalar_lookup)
 {
@@ -139,7 +141,7 @@ SV* HRXSK_encap_new(char *package, SV* object, SV *table, SV* forward, SV* scala
     HR_DEBUG("Encap key");
     new_ke.obj_ptr = newRV_inc(SvRV(object));
     
-    new_ke.obj_paddr = (char*)SvRV(object);
+    new_ke.obj_paddr = SvRV(object);
     
 #ifdef HR_MAKE_PARENT_RV
     new_ke.table = newSVsv(table);

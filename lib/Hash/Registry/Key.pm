@@ -33,8 +33,4 @@ use Scalar::Util qw(weaken);
 use Hash::Registry::Common;
 use base qw(Hash::Registry::Key);
 
-sub DESTROY {
-    my $self = shift;
-}
-
 1;
