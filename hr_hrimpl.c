@@ -25,22 +25,18 @@ static HSpec LookupKeys[] = {
     {HR_HKEY_RLOOKUP, (char*)sizeof(HR_HKEY_RLOOKUP)-1}
 };
 
-static struct
-hr_key_simple {
-    //SV *forward_hashref;
-    //SV *scalar_hashref;
-    /*implicitly allocated string follows..*/
-};
+typedef char hrk_simple;
+typedef struct hrk_encap_S hrk_encap;
 
-static struct
-hr_key_encapsulating {
+struct hrk_encap_S {
     SV* obj_ptr;
     SV* table;
     char *obj_paddr;
 };
 
+
 static inline HV*
-get_v_hashref(struct hr_key_encapsulating *ke, SV* value);
+get_v_hashref(hrk_encap *ke, SV* value);
 
 static inline void
 get_hashes(HV *table, ...);
@@ -48,7 +44,7 @@ get_hashes(HV *table, ...);
 static void k_encap_cleanup(SV *ksv)
 {
     /*Find our forward entry from the stringified object pointer*/
-    struct hr_key_encapsulating *ke = (struct hr_key_encapsulating*)SvPV_nolen(ksv);
+    hrk_encap *ke = (hrk_encap*)SvPV_nolen(ksv);
     HR_DEBUG("Hi!");
     HV *table;
 #ifdef HR_MAKE_PARENT_RV
@@ -124,7 +120,7 @@ static void k_encap_cleanup(SV *ksv)
 
 void HRXSK_encap_weaken(SV *ksv_ref)
 {
-    struct hr_key_encapsulating *ke = (struct hr_key_encapsulating*)SvPV_nolen(SvRV(ksv_ref));
+    hrk_encap *ke = (hrk_encap*)SvPV_nolen(SvRV(ksv_ref));
     HR_DEBUG("Weakening encapsulated object reference");
     sv_rvweaken(ke->obj_ptr);
     HR_DEBUG("OK=%d", SvROK(ke->obj_ptr));
@@ -132,14 +128,14 @@ void HRXSK_encap_weaken(SV *ksv_ref)
 
 UV HRXSK_encap_kstring(SV* ksv_ref)
 {
-    struct hr_key_encapsulating *ke = (struct hr_key_encapsulating*)SvPV_nolen(SvRV(ksv_ref));
+    hrk_encap *ke = (hrk_encap*)SvPV_nolen(SvRV(ksv_ref));
     return SvRV(ke->obj_ptr);
 }
 
 
 SV* HRXSK_encap_new(char *package, SV* object, SV *table, SV* forward, SV* scalar_lookup)
 {
-    struct hr_key_encapsulating new_ke;
+    hrk_encap new_ke;
     HR_DEBUG("Encap key");
     new_ke.obj_ptr = newRV_inc(SvRV(object));
     
@@ -157,7 +153,7 @@ SV* HRXSK_encap_new(char *package, SV* object, SV *table, SV* forward, SV* scala
     HR_DEBUG("New blessed class");
     
     
-    struct hr_key_encapsulating *keptr = (struct hr_key_encapsulating*)SvPV_nolen(SvRV(ksv));
+    hrk_encap *keptr = (hrk_encap*)SvPV_nolen(SvRV(ksv));
     HR_DEBUG("Extracted blob..");
     
     mk_ptr_string(key_s, SvRV(object));
@@ -185,7 +181,7 @@ SV* HRXSK_encap_new(char *package, SV* object, SV *table, SV* forward, SV* scala
             .ktype = HR_KEY_TYPE_PTR,
             .atype = HR_ACTION_TYPE_CALL_CFUNC,
             .key = (char*)SvRV(ksv),
-            .hashref = &k_encap_cleanup,
+            .hashref = (SV*)&k_encap_cleanup,
         },
         HR_ACTION_LIST_TERMINATOR
     };
@@ -209,7 +205,7 @@ get_hashes(HV *table, ...)
         }
         SV **hashptr = (SV**)va_arg(ap, SV**);
         
-        HSpec *kspec = LookupKeys[ltype-1];
+        HSpec *kspec = (HSpec*)LookupKeys[ltype-1];
         char *hkey = (*kspec)[0];
         int klen = (*kspec)[1];
         SV **result = hv_fetch(table, hkey, klen, 0);
@@ -224,7 +220,7 @@ get_hashes(HV *table, ...)
 }
 
 static inline HV*
-get_v_hashref(struct hr_key_encapsulating *ke, SV* value)
+get_v_hashref(hrk_encap *ke, SV* value)
 {
     HV *table;
 #ifdef HR_MAKE_PARENT_RV
@@ -255,7 +251,7 @@ get_v_hashref(struct hr_key_encapsulating *ke, SV* value)
 void HRXSK_encap_link_value(SV *self, SV *value)
 {
     HR_DEBUG("LINK VALUE!");
-    struct hr_key_encapsulating *ke = SvPV_nolen(SvRV(self));
+    hrk_encap *ke = (hrk_encap*)SvPV_nolen(SvRV(self));
     HR_DEBUG("Have key!");
     HV *v_hashref = get_v_hashref(ke, value);
     HR_DEBUG("Have private hashref");
@@ -292,14 +288,11 @@ void HRXSK_encap_link_value(SV *self, SV *value)
 ////////////////////////////////////////////////////////////////////////////////
 
 #define strkey_from_simple(sp) \
-    (char*)((sp)+sizeof(struct hr_key_simple));
+    (char*)((sp)+sizeof(hrk_simple));
 
 SV* HRXSK_new(char *package, char *key, SV *forward, SV *scalar_lookup)
 {
-    struct hr_key_simple newkey = {
-        //.forward_hashref = SvRV(forward),
-        //.scalar_hashref = SvRV(scalar_lookup)
-    };
+    hrk_simple newkey;
     
     int keylen = strlen(key) + 1;
     int bloblen = keylen + sizeof(newkey);

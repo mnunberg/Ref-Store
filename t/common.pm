@@ -35,27 +35,27 @@ sub test_scalar_key {
     my @object_list;
     my $obj = ValueObject->new();
     push @object_list, $obj;
-    $hash->store($key, $obj);
-    is($hash->fetch($key), $obj, "Simple retrieval");
-    $hash->delete_value($obj);
-    ok(!$hash->fetch($key), "Item deleted by value");
+    $hash->store_sk($key, $obj);
+    is($hash->fetch_sk($key), $obj, "Simple retrieval");
+    $hash->purge($obj);
+    ok(!$hash->fetch_sk($key), "Item deleted by value");
     my @keys = qw(Key1 Key2 Key3);
     foreach (@keys) {
-        $hash->store($_, $obj);
+        $hash->store_sk($_, $obj);
     }
     
     {
         my @otmp;
         foreach (@keys) {
-            push @otmp, $hash->fetch($_);
+            push @otmp, $hash->fetch_sk($_);
         }
         is(scalar grep($_ == $obj, @otmp),
            scalar @keys, "Multi-key lookup");
         my $ktmp = pop @keys;
-        $hash->delete_key_lookup($ktmp);
-        ok(!$hash->fetch($ktmp), "Single key deletion");
-        $hash->delete_value_by_key(shift @keys);
-        ok(!$hash->fetch(shift @keys), "Delete by single key");
+        $hash->unlink_sk($ktmp);
+        ok(!$hash->fetch_sk($ktmp), "Single key deletion");
+        $hash->purgeby_sk(shift @keys);
+        ok(!$hash->fetch_sk(shift @keys), "Delete by single key");
     }
     weaken($obj);
     $hash->store("Key", $obj);
@@ -125,14 +125,14 @@ sub test_scalar_attr {
     }
     is($hash->fetch_a(42, $t), 1, "Value GC from attr collection");
     
-    $hash->delete_attr_from_value(42, $t, $v);
+    $hash->dissoc_a(42, $t, $v);
     ok(!$hash->has_value($v), "Value automatically deleted");
     ok(!$hash->has_attr(42, $t), "Attribute automatically deleted");
     my $v2 = ValueObject->new();
     
     $hash->store_a(42, $t, $v);
     $hash->store_a(42, $t, $v2);
-    $hash->delete_attr_from_all(42, $t);
+    $hash->unlink_a(42, $t);
     ok(!($hash->has_attr(42, $t) || $hash->has_value($v) || $hash->has_value($v2)),
        "Totally deleted!");
 }
@@ -146,7 +146,7 @@ sub test_object_attr {
     $hash->store_a($attr, $t, $v);
     ok(grep($v, $hash->fetch_a($attr, $t)), "Object attribute fetch");
     #print Dumper($hash);
-    $hash->delete_attr_from_value($attr, $t, $v);
+    $hash->dissoc_a($attr, $t, $v);
     ok(!($hash->has_attr($attr,$t)||$hash->has_value($v)), "Object attribute deletion");
     #print Dumper($hash);
     

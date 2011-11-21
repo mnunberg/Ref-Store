@@ -39,8 +39,28 @@ sub _keyfunc_defl {
 	return $k;
 }
 
+our $SelectedImpl;
+
 sub new {
 	my ($cls,%options) = @_;
+	
+	if($cls eq __PACKAGE__) {
+		if(!defined $SelectedImpl) {
+			log_debug("Will try to select best implementation");
+			foreach (qw(XS PP)) {
+				my $impl = $cls . "::$_";
+				eval "require $impl";
+				if(!$@) {
+					$SelectedImpl = $impl;
+					last;
+				}
+			}
+		}
+		die "Can't load any implmented" unless $SelectedImpl;
+		$cls = $SelectedImpl;
+		log_debug("Using $SelectedImpl");
+	}
+	
 	$options{keyfunc} ||= \&_keyfunc_defl;
 	$options{unkeyfunc} ||= sub { $_[0] };
 	$options{attr_lookup} = {};
@@ -51,7 +71,7 @@ sub new {
 	return $self;
 }
 
-sub delete_value {
+sub purge {
 	my ($self,$value) = @_;
 	return unless defined $value;
 	my $vstring = $value + 0;
@@ -179,7 +199,7 @@ sub ukey2ikey {
 	return $o;
 }
 
-sub store {
+sub store_sk {
 	my ($self,$ukey,$value,%options) = @_;
 	my $o = $self->ukey2ikey($ukey,
 		Create => 1,
@@ -201,17 +221,19 @@ sub store {
 	}
 	return $value;
 }
+*store = \&store_sk;
 
-sub fetch {
+sub fetch_sk {
 	my ($self,$simple_scalar) = @_;
 	#log_info("called..");
 	my $o = $self->ukey2ikey($simple_scalar);
 	return unless $o;
 	return $self->forward->{$o->kstring};
 }
+*fetch = \&fetch_sk;
 
 #This dissociates a value from a single key
-sub delete_key_lookup {
+sub unlink_sk {
 	my ($self,$simple_scalar) = @_;
 	
 	my $stored = $self->fetch($simple_scalar);
@@ -236,14 +258,16 @@ sub delete_key_lookup {
 	
 	return $stored;
 }
+*unlink = \&unlink_sk;
 
-sub delete_value_by_key {
+sub purgeby_sk {
 	my ($self,$kspec) = @_;
 	my $value = $self->fetch($kspec);
 	return unless $value;
-	$self->delete_value($value);
+	$self->purge($value);
 	return $value;
 }
+*purgeby = \&purgeby_sk;
 
 ################################################################################
 ################################################################################
@@ -325,14 +349,14 @@ sub fetch_a {
 	return @ret;
 }
 
-sub delete_value_by_attr {
+sub purgeby_a {
     my ($self,$attr,$t) = @_;
     my @values = $self->fetch_a($attr, $t);
-    $self->delete_value($_) foreach @values;
+    $self->purge($_) foreach @values;
 	return @values;
 }
 
-sub delete_attr_from_value {
+sub dissoc_a {
     my ($self,$attr,$t,$value) = @_;
     my $aobj = $self->attr_get($attr, $t);
 	if(!$aobj) {
@@ -350,7 +374,7 @@ sub delete_attr_from_value {
 	$self->maybe_cleanup_value($value);
 }
 
-sub delete_attr_from_all {
+sub unlink_a {
     my ($self,$attr,$t) = @_;
     my $aobj = $self->attr_get($attr, $t);
 	my $attrhash = $aobj->get_hash;
@@ -452,7 +476,7 @@ Later on, in the same function, we have this code:
 	
 Which can be refactored to:
 
-	$Table->delete_value($request);
+	$Table->purge($request);
 
 Which will clean up everything associated with $request.
 
@@ -531,7 +555,7 @@ any type of lookup
 
 Is replaced with:
 
-		$Table->delete_value($request);
+		$Table->purge($request);
 		$request->remove_timeout();
 
 Here is the timeout function:
@@ -542,7 +566,8 @@ Here is the timeout function:
 	  #my $request = delete $heap->{request}->{$request_id};
 	  
 Instead, we delete ALL lookup data associated with the key by doing this:
-	  my $request = $Table->delete_value_by_key_kt($request_id, KT_POE_REQID);
+
+	  my $request = $Table->purgeby_kt($request_id, KT_POE_REQID);
 	  ...
 	  
 We don't need this line
@@ -551,6 +576,7 @@ We don't need this line
 	  ...
 	  
 Nor do we need this
+
 		delete $heap->{wheel_to_request}->{$wheel_id};
 		...
 
@@ -585,14 +611,193 @@ value to be automatically deleted if all its keys are deleted, and for all keys
 to be deleted once a value is deleted. Since both keys and values can be object
 references, this provides a lot of flexibility
 
-=item TIEHASH interface
-
-WIP
-
 
 =back
 
-=head2 API
+=head1 API
+
+=head2 LOOKUP TYPES
+
+There are three common lookup types by which values can be indexed and mapped to.
+
+A <Lookup Type> is just an identifier by which one can fetch and store a value.
+The uniqueness of identifiers is dependent on the lookup type. Performance for various
+lookup types varies.
+
+Each lookup type has a small tag by which API functions pertaining to it can
+be identified
+
+=over
+
+=item Value-specific operations
+
+These functions take a B<value> as their argument, and work regardless of the lookup
+type
+
+=over
+
+=item purge($value)
+
+Remove C<$value> from the database. For all lookup types which are linked to C<$value>,
+they will be removed from the database as well if they do not link to any other
+values
+
+=item vexists($value)
+
+Returns true if C<$value> is stored in the database
+
+=back
+
+=item Simple Key (SK)
+
+This is the quickest and simplest key type. It can use either string or object keys.
+It support. The functions it supports are 
+
+=over
+
+=item store($key, $value, %options)
+
+Store C<$value> under lookup <$key>. Key can be an object reference or string.
+
+A single value can be stored under multiple keys, but a single key can only be linked
+to a single value.
+
+Options are two possible hash options:
+
+=over
+
+=item StrongKey
+
+If the key is an object reference, by default it will be weakened in the databse,
+and when the last reference outside the database is destroyed, an implicit L</unlink>
+will be called on it. Setting C<StrongKey> to true will disable this behavior and
+not weaken the key object
+
+=item StrongValue
+
+By default the value is weakened before it is inserted into the database, and when
+the last external reference is destroyed, an implicit L</purge> is performed. Setting
+this to true will disable this behavior and not weaken the value object.
+
+=back
+
+This method is also available as C<store_sk>
+
+=item fetch($key)
+
+Returns the value object indexed under C<$key>, if any. Also available under C<fetch_sk>
+
+=item lexists($key)
+
+Returns true if C<$key> exists in the database. Also available as C<lexists_sk>
+
+=item unlink($key)
+
+Removes C<$key> from the database. If C<$key> is linked to a value, and that value
+has no other keys linked to it, then the value will also be deleted from the databse.
+Also available as C<unlink_sk>
+
+
+=item purgeby($key)
+If C<$key> is linked to a value, then that value is removed from the database via
+L</purge>
+
+=back
+
+=item Typed Keys
+
+Typed keys are like simple keys, but with more flexibility. Whereas a simple key
+can only store associate any string with a specific value, typed keys allow
+for associating the same string key with different values, so long as the
+type is different. A scenario when this is useful is associating IDs received from
+different libraries, which may be identical, to different values.
+
+For instance:
+
+	use Library1;
+	use Library1;
+	
+	my $hash = Hash::Registry->new();
+	$hash->register_kt('l1_key');
+	$hash->register_kt('l2_key');
+	
+	#later on..
+	my $l1_value = Library1->get_handle();
+	my $l2_value = Library2->get_handle();
+	
+	#assume that this is possible:
+	
+	$l1_value->ID == $l2_value->ID();
+	
+	$hash->store_kt($l1_value->ID(), 'l1_key', $l1_value);
+	$hash->store_kt($l2_value->ID(), 'l2_key', $l2_value);
+
+Note that this will only actually work for B<string> keys. Object keys can still
+only be unique to a single value at a time.
+
+
+All functions described for L</Simple Keys> are identical to those available for
+typed keys, except that the C<$key> argument is transformed into two arguments;
+
+thus:
+	
+	store_kt($key, $type, $value);
+	fetch_kt($key, $type);
+
+and so on.
+
+In addition, there is a function which must be used to register key types:
+
+=over
+
+=item register_kt($ktype, $id)
+
+Register a keytype. C<$ktype> is a constant string which is the type, and C<$id>
+is a unique identifier-prefix (which defaults to C<$ktype> itself)
+
+=back
+
+=item Attributes
+
+Whereas keys map value objects according to their I<identities>, attributes map
+objects according to arbitrary properties or user defined tags. Hence an attribute
+allows for a one-to-many relationship between a lookup index and its corresponding
+value.
+
+The common lookup API still applies. Attributes must be typed, and therefore
+all attributes must have a type, and all API functions requiring a key will also
+require a type.
+A suffix of C<_a> is appended to all API functions.
+In addition, the following differences in behavior and options exist
+
+=over
+
+=item store_a($attr, $type, $value, %options)
+
+Like L</store>, but option hash takes a C<StrongAttr> option instead of a C<StrongKey>
+option, which is the same. Attributes will be weakened for all associated values
+if C<StrongAttr> was not specified during I<any> insertion operation.
+
+=item fetch_a($attr, $type)
+
+Fetch function returns an I<array> of values, and not a single value.
+
+=item dissoc_a($attr, $type, $value)
+
+Dissociates an attribute lookup from a single value. This function is special
+for attributes, where a single attribute can be tied to more than a single value.
+
+=item unlink_a($attr, $type)
+
+Removes the attribtue from the database. Since multiple values can be tied to the
+same attribute, this can potentially remove many values from the DB. Be sure to
+use this function with caution
+
+=back
+
+=back
+
+=head2 CONSTRUCTION
 
 =over
 
@@ -610,101 +815,3 @@ uses its address, otherwise it uses the stringified value. It takes the user key
 as its argument
 
 =back
-
-=item store($ukey, $value, %options)
-
-Stores C<$value> under <$ukey>.
-
-Options are as follows
-
-=over
-
-=item StrongKey
-
-If true, then this key will retain a reference to C<$ukey>. By default, keys are
-stored as weak references and automatically deleted when the value is deleted.
-
-Setting this to true is useful if the key is a child/dependent of the value.
-
-By default, keys are stored as weak references
-
-Note that it is not currently possible to modify the strength property of a key
-once it has been inserted.
-
-=item StrongValue
-
-If true, then the value will not be deleted/garbage collected until C<$ukey> is
-deleted, either via garbage collection or through manually removing the entry
-
-=back
-
-
-=item fetch($ukey)
-
-Fetch the item stored under C<$ukey>
-
-=item delete_key_lookup($ukey)
-
-Removes the value stored under C<$ukey>, so that it is no longer indexed by it.
-If C<$ukey> is the last key storing the value, the value will be deleted from the
-table.
-
-Returns the value
-
-=item delete_value($value)
-
-Deletes the value from the table. All keys will be deleted as well
-
-=item delete_value_by_key($ukey)
-
-Given a single key, delete the value (and all other associated keys) which is indexed
-under C<$ukey>.
-
-Returns the value.
-
-=item keys_for_value($value)
-
-Returns a list of the keys associated with C<$value>. Note that the return value
-is a I<copy>, and modifying it will have no effect on the table.
-
-=back
-
-
-=head2 EXTENDED API
-
-This provides the API for attributes and typed keys.
-
-Standalone typed-keys are a work in progress.
-
-=head2 register_kt($key_id, $key_prefix)
-
-Register a keytype with the identifier C<$key_id>. You will use this identifier
-for future reference and association, and it will be recognized as a valid keytype.
-
-C<$key_prefix> is an optional prefix for internal storage, so as to make it easier
-to debug L<Data::Dumper> output, or for potential performance gains while hashing.
-It defaults to C<$key_id>
-
-=item store_a($attribute, $attribute_type, $value, %options)
-
-Stores C<$value> under the given attribute and type. Type must have been registered
-using L</register_kt>. It is permissible to store multiple values under the same
-attribute.
-
-=item fetch_a($attribute,$type)
-
-Returns a list of values which match these attributes
-
-=item delete_value_by_attr($attr,$t)
-
-Finds all values matching the given attribute, and deletes them entirely from
-the lookup table. This *Should* return a list of the values deleted.
-
-=item delete_attr_from_value($attr,$type,$value)
-
-Dissociates an attribute from a value. If this is the last lookup entry for the
-value, then the value will be removed from the table.
-
-=item delete_attr_from_all($attr, $type)
-
-Removes this attribute from the database entirely.

@@ -1,6 +1,7 @@
 #!/usr/bin/perl
 use strict;
 use warnings;
+use blib;
 
 $ValueObject::ObjectCount = 0;
 sub ValueObject::new {
@@ -38,7 +39,7 @@ GetOptions('x|xs' => \my $use_xs,
 
 $count ||= 50;
 $iterations ||= 1;
-
+$Mode ||= 'all';
 if($use_xs) {
 	$Htype = 'Hash::Registry::XS';
 }

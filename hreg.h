@@ -98,7 +98,7 @@ HR_Action {
 };
 
 #define HR_ACTION_LIST_TERMINATOR \
-{ NULL, NULL, HR_KEY_TYPE_NULL, HR_ACTION_TYPE_NULL, 0, NULL }
+{ NULL, NULL, HR_KEY_TYPE_NULL, HR_ACTION_TYPE_NULL, 0, 0 }
 
 HREG_API_INTERNAL
 void HR_add_action(HR_Action *action_list, HR_Action *new_action, int want_unique);
