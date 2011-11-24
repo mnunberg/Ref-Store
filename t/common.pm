@@ -200,9 +200,10 @@ sub test_chained_basic {
     }
     $Data::Dumper::Useqq = 1;
     #print Dumper($hash);
-    print $hash->dump();
+    #print $hash->dump();
     undef $nested_obj;
     ok($hash->is_empty(), "Nested deletion OK");
+    $hash->dump();
     #undef $second_obj;
     #undef $third_obj;
     #print Dumper($hash);

@@ -26,44 +26,37 @@ use Getopt::Long;
 use Log::Fu { level=> "debug" };
 use lib "/home/mordy/src/Hash-Registry/lib";
 use Benchmark qw(:all);
-use Devel::Peek qw(mstat);
 use Memory::Usage;
 
 my $Htype = 'Hash::Registry::PP';
 GetOptions('x|xs' => \my $use_xs,
 	'p|pp' => \my $use_pp,
+	'sweeping' => \my $use_sweep,
 	'c|count=i' => \my $count,
 	'i|iterations=i' => \my $iterations,
-	'm|mode=s' => \my $Mode
+	'm|mode=s' => \my $Mode,
+	'd|dump'	=> \my $Dump,
 );
 
 $count ||= 50;
 $iterations ||= 1;
 $Mode ||= 'all';
-if($use_xs) {
-	$Htype = 'Hash::Registry::XS';
-}
-if($use_pp) {
-	$Htype = 'Hash::Registry::PP';
-}
-
-log_info("Selected $Htype implementation");
-
-eval "require $Htype";
 
 my $i_BEGIN = 1;
 my $i_END = $count;
 my $Mu = Memory::Usage->new();
+$Mu->record("BEGIN");
 sub single_pass {
 	my $Hash = $Htype->new();
 	my @olist;
 	#Create object list..
-	$Mu->record("Object creation");
+	my ($impl_s) = (split(/::/, $Htype))[-1];
 	timethis(1, sub {
 		@olist = map { ValueObject->new() } ($i_BEGIN..$i_END);
 	}, "Object Creation");
 	
-	$Mu->record("Key storage");
+	$Mu->record("[$impl_s] Objects Created");
+	
 	if($Mode =~ /key|all/i ) {
 		timethis(1, sub {
 			foreach my $i ($i_BEGIN..$i_END) {
@@ -75,14 +68,15 @@ sub single_pass {
 		}, "Store");
 		
 		log_infof("Created %d objects\n", $ValueObject::ObjectCount);
-	#print Dumper($Hash);
+		
 		log_infof("Have %d objects now", $ValueObject::ObjectCount);
 		log_infof("FORWARD=%d, REVERSE=%d, KEYS=%d",
 			scalar values %{$Hash->forward},
 			scalar values %{$Hash->reverse},
 			scalar values %{$Hash->scalar_lookup});
-	
-	
+		
+		$Mu->record("[$impl_s] Key storage");
+		
 		timethis(1, sub {
 			foreach my $i($i_BEGIN..$i_END) {
 				eval {
@@ -95,7 +89,7 @@ sub single_pass {
 					"Soemthing happen!";
 					#log_info($obj1);
 				}; if($@) {
-					print Dumper($Hash);
+					#print Dumper($Hash);
 					die $@;
 				}
 			}
@@ -118,8 +112,8 @@ sub single_pass {
 			foreach my $o (@olist) {
 				$Hash->store_a(@$_, $o) foreach @attrpairs;
 			}
-			#print Dumper($Hash);
 		}, "Attribute (STORE)");
+		$Mu->record("[$impl_s] Attribtue Storage");
 		
 		my $result_count = 0;
 		timethis(1, sub {
@@ -130,8 +124,17 @@ sub single_pass {
 		
 	}
 	
+	if($Dump) {
+		$Hash->dump();
+	}
+	
+
 	timethis(1, sub { @olist = () }, "Delete");
-	$Mu->record("Objects deleted");
+	
+	if($Hash->isa('Hash::Registry::Sweeping')) {
+		log_warn("Sweeping..");
+		$Hash->sweep();
+	}
 	$Mu->dump();
 
 	log_debug("Everything should be cleared");
@@ -140,12 +143,38 @@ sub single_pass {
 		scalar values %{$Hash->forward},
 		scalar values %{$Hash->reverse}
 	);
-	print Dumper($Hash);
+	$Hash->dump();
 }
 
-for (1..$iterations) {
-	mstat("PASS=$_");
-	single_pass();
+
+
+
+my $use_all = !($use_xs||$use_pp||$use_sweep);
+my @impl_map = (
+	$use_xs, 'XS',
+	$use_pp, 'PP',
+	$use_sweep, 'Sweeping'
+);
+
+
+
+my @EnabledImplementations;
+
+while (@impl_map) {
+	my ($enabled,$backend) = splice(@impl_map, 0, 2);
+	if(!$enabled && !$use_all) {
+		next;
+	}
+	push @EnabledImplementations, 'Hash::Registry::'.$backend;
+}
+
+foreach my $impl (@EnabledImplementations) {
+	$Htype = $impl;
+	eval "require $Htype";
+	log_warn("Using $Htype");
+	for (1..$iterations) {
+		single_pass();
+	}
 }
 
 sub compare_simple {

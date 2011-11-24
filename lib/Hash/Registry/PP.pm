@@ -23,6 +23,11 @@ sub new {
     return $self;
 }
 
+#sub DESTROY {
+#    my $self = shift;
+#    delete $self->[HR_KFLD_TABLEREF]->scalar_lookup->{$self->[HR_KFLD_STRSCALAR]};
+#}
+
 package Hash::Registry::PP::Key::Encapsulating;
 use strict;
 use warnings;

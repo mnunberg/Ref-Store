@@ -20,5 +20,7 @@ our @EXPORT = qw(
     HRXSK_encap_weaken
     HRXSK_encap_link_value
     HRXSK_encap_getencap
+	HRA_store_sk
+	HRA_fetch_sk
 );
 1;

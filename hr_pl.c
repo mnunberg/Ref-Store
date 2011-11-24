@@ -12,6 +12,7 @@ static int
 freehook(pTHX_ SV* target, MAGIC *mg)
 {
 	HR_DEBUG("FREEHOOK: mg=%p, obj=%p", mg, target);
+	HR_DEBUG("Object refcount: %d", SvREFCNT(target));
     HR_trigger_and_free_actions(_mg_action_list(mg));
 }
 

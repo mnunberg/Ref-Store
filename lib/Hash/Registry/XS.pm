@@ -34,6 +34,11 @@ use base qw(Hash::Registry);
 use Hash::Registry::XS::cfunc;
 use Log::Fu;
 
+#These two lines completely override the perl store/fetch code and utilize
+#pure C! - double the speed
+*store = *store_sk = \&HRA_store_sk;
+*fetch = *fetch_sk = \&HRA_fetch_sk;
+
 sub new_key {
     my ($self,$scalar) = @_;
     if(!ref $scalar) {
@@ -63,3 +68,18 @@ sub dref_del_ptr {
 
 
 1;
+
+__END__
+
+=head1 NAME
+
+Hash::Registry::XS - XS/C implementation of the H::R API
+
+=head2 DESCRIPTION
+
+No user serviceable parts inside.
+
+This backend currently handles store, fetch, and back-delete operations entirely
+in C, making it significantly fast.
+
+Attributes are yet to be implemented

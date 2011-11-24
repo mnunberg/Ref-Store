@@ -49,7 +49,7 @@ sub new {
 	if($cls eq __PACKAGE__) {
 		if(!defined $SelectedImpl) {
 			log_debug("Will try to select best implementation");
-			foreach (qw(XS PP)) {
+			foreach (qw(XS PP Sweeping)) {
 				my $impl = $cls . "::$_";
 				eval "require $impl";
 				if(!$@) {
@@ -324,10 +324,15 @@ sub new_attr {
 
 sub attr_get {
     my ($self,$attr,$t,%options) = @_;
-	my $attr_s = ref $attr ? $attr + 0 : $attr;
-	my $attr_t = $self->keytypes->{$t};
-	die "Unknown attribute type '$t'" unless $attr_t;
-    my $ustr = $attr_t . $attr_s;
+	
+	my $ustr =
+		($self->keytypes->{$t} or die "Can't find attribute type $t") .
+		$attr . (ref $attr ? $attr + 0 : $attr);
+	
+#	my $attr_s = ref $attr ? $attr + 0 : $attr;
+#	my $attr_t = $self->keytypes->{$t};
+#	die "Unknown attribute type '$t'" unless $attr_t;
+#    my $ustr = $attr_t . $attr_s;
     my $aobj = $self->attr_lookup->{$ustr};
     return $aobj if $aobj;
     
@@ -356,7 +361,8 @@ sub store_a {
 	}
     my $vaddr = $value + 0;
     #log_warn("STORING $t:$attr:$value");
-    weaken($self->reverse->{$vaddr}->{$aobj+0} = $aobj);
+    #weaken($self->reverse->{$vaddr}->{$aobj+0} = $aobj);
+	$self->reverse->{$vaddr}->{$aobj+0} = $aobj;
     
     if(!$options{StrongValue}) {
         $aobj->store_weak($vaddr, $value);

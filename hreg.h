@@ -6,10 +6,15 @@
 #include "XSUB.h"
 #include <stdint.h>
 
-//#define HR_DEBUG
+#define HR_DEBUG
 
 #ifndef HR_DEBUG
-#define HR_DEBUG(fmt, ...) if(getenv("HR_DEBUG")) { \
+static int _hr_enable_debug = -1;
+#define _hr_can_debug \
+    (_hr_enable_debug >= 0 ? _hr_enable_debug : \
+        (_hr_enable_debug = getenv("HR_DEBUG") ? 1 : 0))
+
+#define HR_DEBUG(fmt, ...) if(_hr_can_debug) { \
     fprintf(stderr, "[%s:%d (%s)] " fmt "\n", \
         __FILE__, __LINE__, __func__, ## __VA_ARGS__); \
 }
@@ -143,7 +148,8 @@ void HRXSK_encap_weaken(SV *ksv_ref);
 void HRXSK_encap_link_value(SV *self, SV *value);
 SV*  HRXSK_encap_getencap(SV *self);
 
-/*New key object..*/
-
+/*H::R API*/
+void HRA_store_sk(SV *hr, SV *ukey, SV *value, ...);
+SV*  HRA_fetch_sk(SV *hr, SV *ukey);
 
 #endif /*HREG_H_*/

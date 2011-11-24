@@ -10,10 +10,10 @@ lib/Hash/Registry/PP.pm
 lib/Hash/Registry/Feature/KeyTyped.pm
 lib/Hash/Registry/XS.pm
 lib/Hash/Registry/XS/cfunc.pm
+lib/Hash/Registry/Sweeping.pm
 lib/Hash/Registry/Key.pm
 lib/Hash/Registry/Attribute.pm
 lib/Hash/Registry/Dumper.pm
-
 t/00-impl_xs.t
 t/common.pm
 t/00-impl_pp.t

@@ -1,0 +1,40 @@
+Key types:
+
+sk: simple key lookup, one value per lookup
+kt: typed key lookup, one value per lookup, but identical lookups can be added as long as they differ in type
+a: attribute lookup, multiple values per lookup
+
+
+Key Operations:
+store(K, V): store a value under lookup K
+fetch(K): fetch value(s) stored under lookup K
+unlink(K): remove lookup K from database. Values whos last remaining lookup is K will also be removed
+dissoc(K, V): remove lookup K from V (only valid for attributes)
+purgeby(K): perform purge on values which match the lookup K
+lexists(K): whether lookup K exists in the database
+
+Value Operations:
+purge(V): remove value V from database.
+vexists(V): whether value V exists in the database
+
+
+SK:
+store_sk(key, value);
+fetch_sk(value);
+unlink_sk(key);
+purgeby_sk(key);
+
+KT:
+register_kt(type, prefix): register a key type
+store_kt(key, type, value);
+fetch_kt(key, type);
+unlink_kt(key, type);
+purgeby_kt(key, type);
+
+A:
+register_a: == register_kt
+store_a(attr, type, value);
+fetch_a(attr, type);
+unlink_a(attr, type);
+dissoc_a(attr, type, value);
+purgeby_a(attr, type)

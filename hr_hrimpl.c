@@ -3,7 +3,6 @@
 #include <string.h>
 #include <stdarg.h>
 
-
 #define REF2HASH(ref) ((HV*)(SvRV(ref)))
 
 #define HR_HKEY_RLOOKUP "reverse"
@@ -261,7 +260,7 @@ void HRXSK_encap_link_value(SV *self, SV *value)
         die("Couldn't get reverse entry!");
     }
     
-    SV* hashref_ptr = newRV_inc(v_hashref);
+    SV* hashref_ptr = newRV_inc((SV*)v_hashref);
     
     HR_Action vdel_actions[] = {
         {
@@ -308,7 +307,7 @@ SV* HRXSK_new(char *package, char *key, SV *forward, SV *scalar_lookup)
     char *blob_alloc = SvPV_nolen(SvRV(ksv));
     char *key_offset = blob_alloc + sizeof(newkey);
         
-    SV **scalar_entry = hv_store(SvRV(scalar_lookup),
+    SV **scalar_entry = hv_store(REF2HASH(scalar_lookup),
                                  key, keylen-1,
                                  newSVsv(ksv), 0);
     if(!scalar_entry) {
@@ -343,5 +342,213 @@ char * HRXSK_kstring(SV *obj)
     char *blob = SvPV_nolen(SvRV(obj));
     char *ret = strkey_from_simple(blob);
     HR_DEBUG("Requested key=%s", ret);
+    return ret;
+}
+
+
+/*API*/
+
+/*All references to other non-perl functions work in the existing PP implementation
+ when they are run via their XS wrappers run via C2XS
+*/
+static enum {
+    STORE_OPT_STRONG_KEY    = 1 << 0,
+    STORE_OPT_STRONG_VALUE  = 1 << 1,
+    STORE_OPT_O_CREAT       = 1 << 2
+} HR_KeyOptions;
+
+#define PKG_KEY_SCALAR "Hash::Registry::XS::Key"
+#define PKG_KEY_ENCAP "Hash::Registry::XS::Key::Encapsulating"
+#define STROPT_STRONG_KEY "StrongKey"
+#define STROPT_STRONG_VALUE "StrongValue"
+
+static inline SV* ukey2ikey(
+    SV* self,
+    SV* key,
+    SV** existing,
+    int options)
+{
+    SV *slookup = NULL, *flookup = NULL;
+    SV *kobj = NULL;
+    
+    get_hashes(REF2HASH(self),
+               HR_HKEY_LOOKUP_SCALAR, &slookup,
+               HR_HKEY_LOOKUP_NULL);
+    
+    SV *our_key;
+    
+    if(SvROK(key)) {
+        our_key = newSVuv(SvUV(key));
+    } else {
+        our_key = newSVsv(key);
+    }
+    
+    sv_2mortal(our_key);
+    HR_DEBUG("Using key %s", SvPV_nolen(our_key));
+    HE *stored_key = hv_fetch_ent(REF2HASH(slookup), our_key, 0, 0);
+    if(stored_key) {        
+        if(existing
+            && SvROK(HeVAL(stored_key))
+            && SvRV(HeVAL(stored_key)) != SvRV(*existing))
+        {
+             die("Requested new key storage for value %p, but key is already "
+                 "linked to %p", SvRV(*existing), SvRV(HeVAL(stored_key)));
+        }
+        else
+        {
+            if(existing) {
+                *existing = HeVAL(stored_key);
+            }
+            HR_DEBUG("Found KO=%p (RV=%p)", HeVAL(stored_key), SvRV(HeVAL(stored_key)));
+            HR_DEBUG("Refcount for base object: %d", SvREFCNT(SvRV(HeVAL(stored_key))));
+            return HeVAL(stored_key);
+        }
+    } else {
+        if(existing) {
+            *existing = NULL;
+        }
+    }
+    /*The previous block always returns*/
+    
+    if( (options & STORE_OPT_O_CREAT) == 0 ) {
+        return NULL;
+    }
+    
+    get_hashes(REF2HASH(self),
+           HR_HKEY_LOOKUP_FORWARD, &flookup,
+           HR_HKEY_LOOKUP_NULL);
+    
+    if(SvROK(key)) {
+        kobj =  HRXSK_encap_new(
+                PKG_KEY_ENCAP,
+                key, self, flookup, slookup
+        );
+        
+        if( (options & STORE_OPT_STRONG_KEY) == 0) {
+            HRXSK_encap_weaken(kobj);
+        }
+    } else {
+        kobj = HRXSK_new(PKG_KEY_SCALAR,
+                         //No need to give our own table
+                SvPV_nolen(our_key), flookup, slookup
+        );
+    }
+    return kobj;
+}
+
+void HRA_store_sk(SV *self, SV *key, SV *value, ...)
+{
+    HV *table = (HV*)SvRV(self);
+    
+    SV *flookup = NULL, /*forward lookup*/
+        *rlookup = NULL;
+    
+    
+    SV *kobj = NULL; //Key object
+    SV *kstring; //Key string or refaddr
+    
+    SV *existing_ent = value;
+    
+    SV *vstring = sv_2mortal(newSVuv(SvUV(value))); //Value refaddr
+    SV *hval = newSVsv(value); //reference to store in the forward hash
+    if(!SvROK(value)) {
+        die("Value must be a reference!");
+    }
+    HE *vhash_ent; //Value's reverse entry in reverse table
+    SV *vhash; //Value's lookup references
+    
+    int key_is_ref = SvROK(key);
+    
+    int iopts = STORE_OPT_O_CREAT;
+    int i;
+    
+    dXSARGS;
+    if( (items-3) % 2) {
+        die("Odd number of extra arguments. Expected none or a hash of options (got %d)",
+            items-3);
+    }
+    
+    for(i = 3; i < items; i += 2) {
+    #define _chkopt(option) \
+        if(strcmp(STROPT_ ## option, SvPV_nolen(ST(i))) == 0 \
+        && SvTRUE(ST(i+1))) { \
+            iopts |= STORE_OPT_ ## option; \
+            HR_DEBUG("Found option %s", STROPT_ ## option); \
+            continue; \
+        }
+        _chkopt(STRONG_VALUE);
+        _chkopt(STRONG_KEY);
+        #undef _chkopt
+    }
+        
+    kobj = ukey2ikey(self, key, &existing_ent, iopts);
+    if(existing_ent) {
+        HR_DEBUG("We're already stored");
+        XSRETURN(0);
+    }
+        
+    /*Not stored yet*/
+    kstring = (key_is_ref) ? sv_2mortal(newSVuv(SvUV(key))) : sv_mortalcopy(key);
+    get_hashes(table,
+               HR_HKEY_LOOKUP_FORWARD, &flookup,
+               HR_HKEY_LOOKUP_REVERSE, &rlookup,
+               HR_HKEY_LOOKUP_NULL);
+    /*Get value hashref*/
+    vhash_ent = hv_fetch_ent(REF2HASH(rlookup), vstring, 1, 0);
+    vhash = HeVAL(vhash_ent);
+    if(!SvROK(vhash)) {
+        SV *real_vhash = newRV_noinc((SV*)newHV());
+        SvSetSV(vhash, real_vhash);
+        SvREFCNT_dec(SvRV(real_vhash));
+        HR_DEBUG("Inserted new value entry, refcount=%d", SvREFCNT(SvRV(real_vhash)));
+    }
+    
+    /*PP: $self->reverse->{$vstring}->{$kstring} = $kobj*/
+    hv_store_ent(REF2HASH(vhash), kstring, kobj, 0);    
+    
+    /*PP: $self->forward->{$kstring} = $value*/
+    HR_DEBUG("Storing FLOOKUP{%s} (SV=%p) (RV=%p)", SvPV_nolen(kstring), hval, SvRV(hval));
+    hv_store_ent(REF2HASH(flookup), kstring, hval, 0);
+
+    
+    /*PP: dred_add_ptr*/
+    HR_PL_add_action_ptr(hval, rlookup);
+    
+    /*PP: $ko->link_value(); only valid for encapsulated keys*/
+    if(key_is_ref) {
+        HRXSK_encap_link_value(kobj, hval);
+    }
+    
+    /*PP: if(!$options{StrongValue}) { weaken($self->forward->kstring)}*/
+    if( (iopts & STORE_OPT_STRONG_VALUE) == 0) {
+        HR_DEBUG("Weakening value");
+        sv_rvweaken(hval);
+    }
+    
+    XSRETURN(0);
+}
+
+SV *HRA_fetch_sk(SV *self, SV *key)
+{
+    SV *kobj = ukey2ikey(self, key, NULL, 0);
+    SV *flookup;
+    SV *ret = NULL;
+    if(!kobj) {
+        HR_DEBUG("Can't find key object!");
+        return &PL_sv_undef;
+    }
+    key = SvROK(key) ? sv_2mortal(newSVuv(SvUV(key))) : key;
+    get_hashes((HV*)SvRV(self),
+               HR_HKEY_LOOKUP_FORWARD, &flookup,
+               HR_HKEY_LOOKUP_NULL);
+    
+    HE *res = hv_fetch_ent(REF2HASH(flookup), key, 0, 0);
+    if(res) {
+        HR_DEBUG("Got result for %p", key);
+        ret = newSVsv(HeVAL(res));
+    } else {
+        HR_DEBUG("Nothing for %p", key);
+    }
+    HR_DEBUG("Refcount for key: %d", SvREFCNT(SvRV(kobj)));
     return ret;
 }

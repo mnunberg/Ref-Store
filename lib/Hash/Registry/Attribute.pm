@@ -20,7 +20,7 @@ sub TIEHASH {
     bless [{}, $attrobj], $cls;
 }
 
-sub DELETE($$) {
+sub DELETE {
     my ($hobj,$key) = @_;
     #log_err("DELETE!");
     delete $hobj->[TH_HASH]->{$key};
@@ -198,7 +198,7 @@ sub DESTROY {
             $self->[HR_KFLD_REFSCALAR],
             $table->attr_lookup,
             $astr,
-            );
+        );
         
         $table->dref_del_ptr(
             $self->[HR_KFLD_REFSCALAR],

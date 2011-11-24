@@ -29,7 +29,7 @@ sub fmt_ptr {
         $s .= sprintf("[%d 0x%x]", $ptr+0, $ptr+0);
     }
     if(ref $ptr) {
-        $s .= sprintf(" RV=0x%x WEAK=%d ISA=%s", \$_[0], isweak($_[0]), ref $ptr);
+        $s .= sprintf(" SV=0x%x WEAK=%d ISA=%s", \$_[0], isweak($_[0]), ref $ptr);
     } elsif(!looks_like_number($ptr)) {
         $s .= $ptr;
     }
@@ -64,8 +64,9 @@ sub dump {
     $self->hdr("Values");
 	while ( my($v,$rhash) = each %{$table->reverse}) {
         $self->print("V: %s", $self->fmt_ptr($v));
-		foreach my $k (values %$rhash) {
-            $self->iprint("L: %s, %s", $k->kstring, $self->fmt_ptr($k));
+		while (my ($lk,$lo) = each %$rhash) {
+            $self->iprint("L: %s, %s", $lo->kstring,
+						  $self->fmt_ptr($rhash->{$lk}));
 		}
 	}
 	
@@ -75,15 +76,21 @@ sub dump {
 	while ( my ($k,$vobj) = each %{$table->forward}) {
         $self->iprint("L: %s", $self->fmt_ptr($k));
         $self->{Indent}++;
-        $self->iprint("V: %s", $self->fmt_ptr($vobj));
+        $self->iprint("V: %s", $self->fmt_ptr($table->forward->{$k}));
         $self->{Indent}--;
 	}
     
     $self->hdr("Scalar to key object mappings");
     
 	while (my ($ustr,$ko) = each %{$table->scalar_lookup}) {
+        if(!defined $ko) {
+            $self->iprint("UKEY=%s, KO=undef", $self->fmt_ptr($ustr));
+            next;
+        }
         $self->iprint("UKEY=%s KO=%s",
-            $self->fmt_ptr($ustr), $self->fmt_ptr($ko));
+            $self->fmt_ptr($ustr),
+			$self->fmt_ptr($table->scalar_lookup->{$ustr}));
+		
         if($ko->can("dump")) {
             $self->{Indent}++;
             $ko->dump($self);
@@ -93,7 +100,8 @@ sub dump {
     
     $self->hdr("Attribute mappings");
     while (my ($astr,$aobj) = each %{$table->attr_lookup}) {
-        $self->iprint("ASTR=%s ATTR=%s", $astr, $self->fmt_ptr($aobj));
+        $self->iprint("ASTR=%s ATTR=%s", $astr,
+					  $self->fmt_ptr($table->attr_lookup->{$astr}));
         if($aobj->can("dump")) {
             $self->{Indent}++;
             $aobj->dump($self);
