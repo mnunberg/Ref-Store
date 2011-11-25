@@ -60,8 +60,9 @@ typedef enum {
 } HR_DeletionStatus_t;
 
 enum {
-    HR_FLAG_STR_NO_ALLOC =      1 << 0,
-    HR_FLAG_HASHREF_WEAKEN =    1 << 1
+    HR_FLAG_STR_NO_ALLOC =      1 << 0, //Do not copy/allocate/free string
+    HR_FLAG_HASHREF_WEAKEN =    1 << 1, //not really used
+    HR_FLAG_KPTR_FREE      =    1 << 2, //Free pointer type key
 };
 
 typedef struct HR_Action HR_Action;
@@ -95,7 +96,7 @@ HR_Action {
     
     SV          *hashref;
     
-    unsigned int flags:2;
+    unsigned int flags:3;
     /*TODO:
      instead of just using a hashref, specify an action type, perhaps deleting
      something from an arrayref or calling a subroutine directly

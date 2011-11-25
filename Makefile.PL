@@ -25,6 +25,7 @@ WriteMakefile(
         'Task::Weaken'  => 0,
         
     },
+#    LIBS                => ['-lprofiler'],
     OBJECT             => join(".o ", @modules) . ".o Registry.o",
     dist                => { COMPRESS => 'gzip -9f', SUFFIX => 'gz', },
     clean               => { FILES => 'Hash-Registry-* '. $GENERATED_FILES },

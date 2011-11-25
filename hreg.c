@@ -197,7 +197,7 @@ trigger_and_free_action(HR_Action *action_list)
 	container = action_list->hashref;
 #endif
 	recurse_level++;
-	HR_DEBUG("Hello! (%d)", recurse_level);
+	HR_DEBUG("ENTER! (LVL=%d)", recurse_level);
     switch (action_list->ktype) {
         case HR_KEY_TYPE_PTR: {
 			switch (action_list->atype) {
@@ -267,7 +267,7 @@ trigger_and_free_action(HR_Action *action_list)
     GT_ACTION_FREE:
 	ret = action_list->next;
     Safefree(action_list);
-	HR_DEBUG("Done! (%d)", recurse_level);
+	HR_DEBUG("EXIT (LVL=%d)", recurse_level);
 	recurse_level--;
 	return ret;
 }

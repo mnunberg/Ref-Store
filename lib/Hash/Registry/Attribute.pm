@@ -24,7 +24,7 @@ sub DELETE {
     my ($hobj,$key) = @_;
     #log_err("DELETE!");
     delete $hobj->[TH_HASH]->{$key};
-    if(!keys %{$hobj->[TH_HASH]}) {
+    if(!scalar %{$hobj->[TH_HASH]}) {
         delete $hobj->[TH_ATTR];
     }
 }
