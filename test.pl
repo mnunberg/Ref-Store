@@ -2,7 +2,6 @@
 use strict;
 use warnings;
 use blib;
-
 $ValueObject::ObjectCount = 0;
 sub ValueObject::new {
 	my $cls = shift;
@@ -10,13 +9,21 @@ sub ValueObject::new {
 	$ValueObject::ObjectCount++;
 	my $self = \$v;
 	bless $self, $cls;
-	return $self;
 }
 
 sub ValueObject::DESTROY {
-	#log_warn("DESTROY!");
 	$ValueObject::ObjectCount--;
 }
+
+$KeyObject::ObjectCount = 0;
+sub KeyObject::new {
+	my $cls = shift;
+	my $v = rand();
+	$KeyObject::ObjectCount++;
+	my $self = \$v;
+	bless $self, $cls;
+}
+sub KeyObject::DESTROY { $KeyObject::ObjectCount--; }
 
 package main;
 use strict;
@@ -27,20 +34,25 @@ use Log::Fu { level=> "debug" };
 use lib "/home/mordy/src/Hash-Registry/lib";
 use Benchmark qw(:all);
 use Memory::Usage;
+use Devel::Leak;
 
 my $Htype = 'Hash::Registry::PP';
 GetOptions('x|xs' => \my $use_xs,
 	'p|pp' => \my $use_pp,
 	'sweeping' => \my $use_sweep,
 	'c|count=i' => \my $count,
-	'i|iterations=i' => \my $iterations,
 	'm|mode=s' => \my $Mode,
 	'd|dump'	=> \my $Dump,
+	'prealloc=i' => \my $Prealloc,
+	'cycles=i'	=> \my $Cycles
 );
 
+$Cycles ||= 1;
+$Prealloc ||= 0;
 $count ||= 50;
-$iterations ||= 1;
 $Mode ||= 'all';
+
+my $cur_cycle = 0;
 
 my $i_BEGIN = 1;
 my $i_END = $count;
@@ -48,14 +60,15 @@ my $Mu = Memory::Usage->new();
 $Mu->record("BEGIN");
 sub single_pass {
 	my $Hash = $Htype->new();
+	my ($impl_s) = (split(/::/, $Htype))[-1];
+	my $mu_prefix = "$cur_cycle: [$impl_s]";
 	my @olist;
 	#Create object list..
-	my ($impl_s) = (split(/::/, $Htype))[-1];
 	timethis(1, sub {
 		@olist = map { ValueObject->new() } ($i_BEGIN..$i_END);
 	}, "Object Creation");
 	
-	$Mu->record("[$impl_s] Objects Created");
+	$Mu->record("$mu_prefix Objects Created");
 	
 	if($Mode =~ /key|all/i ) {
 		timethis(1, sub {
@@ -65,17 +78,13 @@ sub single_pass {
 				$Hash->store(-$i, $obj);
 				push @olist, $obj;
 			}
-		}, "Store");
+		}, "String Key (STORE)");
 		
 		log_infof("Created %d objects\n", $ValueObject::ObjectCount);
 		
 		log_infof("Have %d objects now", $ValueObject::ObjectCount);
-		log_infof("FORWARD=%d, REVERSE=%d, KEYS=%d",
-			scalar values %{$Hash->forward},
-			scalar values %{$Hash->reverse},
-			scalar values %{$Hash->scalar_lookup});
 		
-		$Mu->record("[$impl_s] Key storage");
+		$Mu->record("$mu_prefix Key storage");
 		
 		timethis(1, sub {
 			foreach my $i($i_BEGIN..$i_END) {
@@ -93,7 +102,32 @@ sub single_pass {
 					die $@;
 				}
 			}
-		}, "Fetch");
+		}, "String Key (FETCH)");
+	}
+	
+	my (@klist,@klist2);
+	if($Mode =~ /objk|all/i) {
+		@klist = map { KeyObject->new() } (0..$i_END-1);
+		@klist2 = map { KeyObject->new() } (0..$i_END-1);
+		$Mu->record("$mu_prefix ObjK created");
+		
+		timethis(1, sub {
+			foreach my $i (0..$i_END-1) {
+				$Hash->store($klist[$i], $olist[$i]);
+				$Hash->store($klist2[$i], $olist[$i]);
+			}
+		}, "Object Key (STORE)");
+		$Mu->record("$mu_prefix ObjK Store");
+		
+		timethis(1, sub {
+			foreach my $i (0..$i_END-1) {
+				my $res1 = $Hash->fetch($klist[$i]);
+				my $res2 = $Hash->fetch($klist2[$i]);
+				if(!$res1 || !$res2 || $res1 != $res2 || $res1 != $olist[$i]) {
+					die("Object key mismatch!");
+				}
+			}
+		}, "Object Key (FETCH)");
 	}
 	
 	if($Mode =~ m/attr|all/i) {
@@ -113,7 +147,7 @@ sub single_pass {
 				$Hash->store_a(@$_, $o) foreach @attrpairs;
 			}
 		}, "Attribute (STORE)");
-		$Mu->record("[$impl_s] Attribtue Storage");
+		$Mu->record("$mu_prefix Attribtue Storage");
 		
 		my $result_count = 0;
 		timethis(1, sub {
@@ -128,14 +162,24 @@ sub single_pass {
 		$Hash->dump();
 	}
 	
+	log_infof("FORWARD=%d, REVERSE=%d, KEYS=%d, ATTRS=%d",
+		scalar values %{$Hash->forward},
+		scalar values %{$Hash->reverse},
+		scalar values %{$Hash->scalar_lookup},
+		scalar values %{$Hash->attr_lookup});
 
-	timethis(1, sub { @olist = () }, "Delete");
+	
+	timethis(1, sub {
+		@olist = ();
+		@klist = ();
+		@klist2 = ();
+	}, "Delete");
 	
 	if($Hash->isa('Hash::Registry::Sweeping')) {
 		log_warn("Sweeping..");
 		$Hash->sweep();
 	}
-	$Mu->dump();
+	
 
 	log_debug("Everything should be cleared");
 	log_infof("Have %d objects now", $ValueObject::ObjectCount);
@@ -146,9 +190,6 @@ sub single_pass {
 	$Hash->dump();
 }
 
-
-
-
 my $use_all = !($use_xs||$use_pp||$use_sweep);
 my @impl_map = (
 	$use_xs, 'XS',
@@ -156,10 +197,7 @@ my @impl_map = (
 	$use_sweep, 'Sweeping'
 );
 
-
-
 my @EnabledImplementations;
-
 while (@impl_map) {
 	my ($enabled,$backend) = splice(@impl_map, 0, 2);
 	if(!$enabled && !$use_all) {
@@ -168,22 +206,43 @@ while (@impl_map) {
 	push @EnabledImplementations, 'Hash::Registry::'.$backend;
 }
 
-foreach my $impl (@EnabledImplementations) {
-	$Htype = $impl;
-	eval "require $Htype";
-	log_warn("Using $Htype");
-	for (1..$iterations) {
+foreach (1..$Cycles) {
+	$cur_cycle = $_;
+	log_info("Cycle: $cur_cycle");
+	foreach my $impl (@EnabledImplementations) {
+		$Htype = $impl;
+		eval "require $Htype";
+		log_warn("Using $Htype");
+		
 		single_pass();
 	}
 }
 
+#Dump memory usage information:
+log_info("Dumping memory usage statistics");
+my $mpriv = 0;
+printf("%-40s %6s\t %6s\n", "State", "RSS", "DIFF");
+foreach my $st (@{$Mu->state()}) {
+	my ($msg,$rss) = @{$st}[1,3];
+	$rss /= 1024;
+	my $diff = $rss - $mpriv;
+	printf("%-40s %6dMB\t %6d\n",
+		   $msg, $rss, $diff);
+	$mpriv = $rss;
+}
+
+undef $Mu;
+
 sub compare_simple {
 	my %simplehash;
+	my @vals;
+	foreach ($i_BEGIN..$i_END) {
+		push @vals, ValueObject->new();
+	}
 	timethis(1, sub {
 		foreach my $i ($i_BEGIN..$i_END) {
-			my $obj = ValueObject->new();
-			$simplehash{$i} = $obj;
-			$simplehash{-$i} = $obj;
+			$simplehash{$i} = $vals[$i];
+			$simplehash{-$i} = $vals[$i];
 		}
 	}, "Normal hash: STORE");
 	timethis(1, sub {
