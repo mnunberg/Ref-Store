@@ -94,8 +94,8 @@ free_our_magic(SV* target)
     }
     
     HR_Action *action = _mg_action_list(mg_cur);
-    if(!action) {
-		warn("Found action=%p", action);
+    if(action) {
+		HR_DEBUG("Found action=%p", action);
 		while((action = HR_free_action(action)));
 	}
     
@@ -152,7 +152,6 @@ HR_PL_del_action(SV* objref, SV* hashref)
 	}
 	
     int dv = HR_ACTION_NOT_FOUND;
-    
     while( (dv = HR_del_action(_mg_action_list(mg), hashref)) == HR_ACTION_DELETED );
     /*no body*/
     HR_DEBUG("Delete done");
