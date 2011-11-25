@@ -448,13 +448,18 @@ Hash::Registry - Leak-free lookups for real objects.
 Hash::Registry provides an efficient and worry-free way to index objects by
 arbitrary data - possibly other objects, simple scalars, or whatever.
 
-
 It relies on magic and such to ensure that objects you put in the lookup table
 are not maintained there unless you want them to be. In other words, you can store
 objects in the table, and delete them without having to worry about what other
 possible indices/references may be holding down the object.
 
 =head2 USAGE APPLICATIONS AND BENEFITS
+
+At a more basic level, this module is good for general simple and safe by-object
+indexing and object tagging. It is also a good replacement for L<Hash::Util::FieldHash>
+support for perls which do not support tied hash C<uvar> magic.
+
+Thus, this module can perform inside-out objects 
 
 This module is not designed for the simple one-off script or module. For most
 applications there is no true need to have multiple dynamically associated and
@@ -947,5 +952,29 @@ database and print information about all values and all lookup types. In additio
 for object references, it will print the reference address in decimal and hexadecimal,
 the actual SV address of the reference, and whether the reference is a weak
 reference.
+
+=back
+
+=head1 AUTHOR
+
+Copyright (C) 2011 by M. Nunberg
+
+You may use and distribute this program under the same terms as perl itself
+
+
+=head1 SEE ALSO
+
+=over
+
+=item L<Hash::Util::FieldHash>
+
+Hash::Registry implements a superset of Hash::Util::FieldHash, but the latter is
+most likely quicker. However, it will only work with perls newer than 5.10
+
+=item L<Tie::RefHash::Weak>
+
+=item L<Variable::Magic>
+
+Perl API for magic interface, used by the C<PP> backend
 
 =back
