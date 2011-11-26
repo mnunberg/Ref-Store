@@ -441,8 +441,82 @@ __END__
 
 =head1 NAME
 
-Hash::Registry - Leak-free lookups for real objects.
+Hash::Registry - Store objects, index by object, tag by objects - all without
+leaking.
 
+
+=head1 SYNOPSIS
+
+	my $table = Hash::Registry->new();
+	
+Store a value under a simple string key, maintain the value as a weak reference.
+The string key will be deleted when the value is destroyed:
+
+	$table->store("key", $object);
+
+Store C<$object> under a second index (C<$fh>), which is a globref;
+C<$fh> will automatically be garbage collected when C<$object> is destroyed.
+
+	{
+		open my $fh, ">", "/foo/bar";
+		$table->store($fh, $object, StrongKey => 1);
+	}
+	# $fh still exists with a sole reference remaining in the table
+	
+Register an attribute type (C<foo_files>), and tag C<$fh> as being one of C<$foo_files>,
+C<$fh> is still dependent on C<$object>
+
+	# assume $fh is still in scope
+	
+	$table->register_kt("foo_files");
+	$table->store_a(1, "foo_files", $fh);
+
+Store another C<foo_file>
+	
+	open my $fh2, ">", "/foo/baz"
+	$table->store_a(1, "foo_files", $fh);
+	# $fh2 will automatically be deleted from the table when it goes out of scope
+	# because we did not specify StrongKey
+	
+Get all C<foo_file>s
+
+	my @foo_files = $table->fetch_a(1, "foo_files");
+	
+	# @foo_files contains ($fh, $fh2);
+	
+Get rid of C<$object>. This can be done in one of the following ways:
+	
+	# Implicit garbage collection
+	undef $object;
+	
+	# Delete by value
+	$table->purge($object);
+	
+	# Delete by key ($fh is still stored under the foo_keys attribute)
+	$table->purgeby($fh);
+
+	# remove each key for the $object value
+	$table->unlink("key");
+	$table->unlink($fh); #fh still exists under "foo" files
+	
+Get rid of C<foo_file> entries
+	
+	# delete, by attribute
+	$table->purgeby_a(1, "foo_files");
+	
+	# delete a single attribute from all entries
+	$table->unlink_a(1, "foo_files");
+	
+	# dissociate the 'foo_files' attribtue from each entry
+	$table->dissoc_a(1, "foo_files", $fh);
+	$table->dissoc_a(1, "foo_files", $fh2);
+	
+	# implicit garbage collection:
+	undef $fh;
+	undef $fh2;
+
+For a more detailed walkthrough, see L<Hash::Registry::Walkthrough>
+	
 =head1 DESCRIPTION
 
 Hash::Registry provides an efficient and worry-free way to index objects by
@@ -470,177 +544,8 @@ In shorter terms, this module allows you to reliably use a I<Single Source Of Tr
 for your object lookups. There is no need to synchronize multiple lookup tables
 to ensure that there are no dangling references to an object you should have deleted
 
-Thus, instead of a simple synopsis, I will try to dissect and pseudo-refactor
-the code in L<POE::Component::Client::HTTP> (refered to as poco-http)
-to demonstrate the usefulness of this module.
 
 =head2 SYNOPSIS
-
-We will assume that there is a gloabl object, <$Table> which may presumably be
-stored on the I<heap>
-
-We have a bunch of key types, so let's register them.
-
-	my @KEY_TYPES;
-	BEGIN {
-		 @KEY_TYPES = map 'KT_'.$_, (
-		 
-			"EXT_REQ", #HTTP::Request object
-			"POE_REQ", #POE::Component::Client::HTTP::Request object
-			"POE_REQID", #ID of the POE request
-			"POE_WID", #POE::Wheel ID, needed for events.
-			
-		);
-		
-		foreach my $kt (@KEY_TYPES) {
-		   no strict 'refs';
-		   *{$kt} = sub () { $kt }
-		}
-	}
-	
-	#....
-	#Assume a table has been created by now
-	$Table->register_kt(@_)  foreach (@KEY_TYPES);
-	
-The poco-http API takes a request object and optionally accepts a tag, by which
-the user can easily identify the response received. The prime internal identifier
-used by POE is an internal Request object (C<POE::Component::Client::HTTP::Request>),
-identified by its refaddr:
-
-	my $request = $heap->{factory}->create_request(
-	  $http_request, $response_event, $tag, $progress_event,
-	  $proxy_override, $sender
-	);
-	$heap->{request}->{$request->ID} = $request;
-	$heap->{ext_request_to_int_id}->{$http_request} = $request->ID;
-
-Instead of the last two lines, we do:
-	
-	$Table->store_kt($request->ID, KT_POE_REQID, $request, StongValue => 1);
-	#Because this is our primary reference.
-	$Table->store_kt($http_request, $request);
-	
-Later on, in the same function, we have this code:
-	
-	if ($@) {
-		delete $heap->{request}->{$request->ID};
-		delete $heap->{ext_request_to_int_id}->{$http_request};
-	
-		# we can reach here for things like host being invalid.
-		$request->error(400, $@);
-	}
-	
-Which can be refactored to:
-
-	$Table->purge($request);
-
-Which will clean up everything associated with $request.
-
-At this point, poco-http has submitted a request to its connection manager
-(L<POE::Component::Client::KeepAlive>), and is now awaiting a response. Here is
-the code which handles it, with ommisions not pertinent to the description of the
-Hash::Registry module.
-
-	sub _poco_weeble_connect_done {
-	  my ($heap, $response) = @_[HEAP, ARG0];
-	
-	  my $connection = $response->{'connection'};
-	  my $request_id = $response->{'context'};
-		
-	  if (defined $connection) {
-		DEBUG and warn "CON: request $request_id connected ok...";
-		
-		#my $request = $heap->{request}->{$request_id};
-
-Nothing revolutionary here, replace with:
-		
-		my $request = $Table->fetch_kt(KT_POE_REQID, $request_id);
-		
-		unless (defined $request) {
-		  DEBUG and warn "CON: ignoring connection for canceled request";		  
-		  return;
-		}
-	
-		my $block_size = $heap->{factory}->block_size;
-	
-		# get wheel from the connection
-		my $new_wheel = $connection->start(
-		  Driver       => POE::Driver::SysRW->new(BlockSize => $block_size),
-		  InputFilter  => POE::Filter::HTTPHead->new(),
-		  OutputFilter => POE::Filter::Stream->new(),
-		  InputEvent   => 'got_socket_input',
-		  FlushedEvent => 'got_socket_flush',
-		  ErrorEvent   => 'got_socket_error',
-		);
-	
-		DEBUG and warn "CON: request $request_id uses wheel ", $new_wheel->ID;
-	
-		# Add the new wheel ID to the lookup table.
-		
-		#$heap->{wheel_to_request}->{ $new_wheel->ID() } = $request_id;
-		
-And instead of this construct, we use:
-
-		$Table->store_a($new_wheel->ID(), KT_POE_WID, $request);
-
-We skip a bunch of SSL initialization code, since it does not seem to use
-any type of lookup
-
-	else {
-		DEBUG and warn(
-		  "CON: Error connecting for request $request_id --- ", $_[SENDER]->ID
-		);
-	
-		my ($operation, $errnum, $errstr) = (
-		  $response->{function},
-		  $response->{error_num} || '??',
-		  $response->{error_str}
-		);
-	
-		DEBUG and warn(
-		  "CON: request $request_id encountered $operation error " .
-		  "$errnum: $errstr"
-		);
-	
-		DEBUG and warn "I/O: removing request $request_id";
-
-		#my $request = delete $heap->{request}->{$request_id};
-		#$request->remove_timeout();
-		#delete $heap->{ext_request_to_int_id}->{$request->[REQ_HTTP_REQUEST]};
-
-
-Is replaced with:
-
-		$Table->purge($request);
-		$request->remove_timeout();
-
-Here is the timeout function:
-
-	sub _poco_weeble_timeout {
-	  my ($kernel, $heap, $request_id) = @_[KERNEL, HEAP, ARG0];
-	  
-	  #my $request = delete $heap->{request}->{$request_id};
-	  
-Instead, we delete ALL lookup data associated with the key by doing this:
-
-	  my $request = $Table->purgeby_kt($request_id, KT_POE_REQID);
-	  ...
-	  
-We don't need this line
-
-	  delete $heap->{ext_request_to_int_id}->{$request->[REQ_HTTP_REQUEST]};
-	  ...
-	  
-Nor do we need this
-
-		delete $heap->{wheel_to_request}->{$wheel_id};
-		...
-
-etc. etc.
-The rest of the POE code is more or less the same.
-
-Look here for some other code which could use an even better helping of this
-module.
 
 
 =head2 FEATURES
@@ -727,7 +632,9 @@ Options are two possible hash options:
 If the key is an object reference, by default it will be weakened in the databse,
 and when the last reference outside the database is destroyed, an implicit L</unlink>
 will be called on it. Setting C<StrongKey> to true will disable this behavior and
-not weaken the key object
+not weaken the key object.
+
+A strong key is still deleted if its underlying value gets deleted
 
 =item StrongValue
 
@@ -736,6 +643,68 @@ the last external reference is destroyed, an implicit L</purge> is performed. Se
 this to true will disable this behavior and not weaken the value object.
 
 =back
+
+It is important to note the various rules and behaviors with key and value
+storage options.
+
+There are two conditions under which an entry (key and value) may be deleted from
+the table. The first condition is when a key or value is a reference type, and
+its referrent goes out of scope; the second is when either a key or a value is
+explicitly deleted from the table.
+
+It is helpful to think of entries as a miniature version of implicit reference
+counting. Each key represents an inherent increment in the value's reference
+count, and each key has a reference count of one, represented by the amount of
+values it actually stores.
+
+Based on that principle, when either a key or a value is forced to I<leave> the
+table (either explicitly, or because its referrant has gone out of scope), its
+dependent objects decrease in their table-based implicit references.
+
+Consider the simple case of implicit deletion:
+
+	{
+		my $key = "string":
+		my $value = \my $foo
+		$table->store($key, $foo);
+	}
+	
+In which case, the string C<"string"> is deleted from the table as $foo goes out
+of scope.
+
+The following is slightly more complex
+	
+	my $value = \my $foo;
+	{
+		my $key = \my $baz;
+		$table->store($key, $value, StrongValue => 1);
+	}
+	
+In this case, C<$value> is removed from the table, because its key object's
+referrant (C<$baz>) has gone out of scope. Even though C<StrongValue> was specified,
+the value is not deleted because its own referrant (C<$foo>) has been destroyed,
+but rather because its table-implicit reference count has gone down to 0 with the
+destruction of C<$baz>
+
+The following represents an inverse of the previous block
+
+	my $key = \my $baz;
+	{
+		my $value = \my $foo;
+		$table->store($key, $value, StrongKey => 1);
+	}
+	
+Here C<$value> is removed from the table because naturally, its referrant, C<$foo>
+has been destroyed. C<StrongKey> only maintains an extra perl reference to C<$baz>.
+
+However, by specifying both C<StrongKey> and C<StrongValue>, we are able to
+completely disable garbage collection, and nothing gets deleted
+
+	{
+		my $key = \my $baz;
+		my $value = \my $foo;
+		$table->store($key, $value, StrongKey => 1, StrongValue => 1);
+	}
 
 This method is also available as C<store_sk>.
 
@@ -754,12 +723,27 @@ Returns true if C<$key> exists in the database. Also available as C<lexists_sk>
 Removes C<$key> from the database. If C<$key> is linked to a value, and that value
 has no other keys linked to it, then the value will also be deleted from the databse.
 Also available as C<unlink_sk>
-
-
+	
+	$table->store("key1", $foo);
+	$table->store("key2", $foo);
+	$table->store("key3", $bar);
+	
+	$table->unlink("key1"); # $foo is not deleted because it exists under "key2"
+	$table->unlink("key3"); # $bar is deleted because it has no remaining lookups
+	
 =item purgeby($key)
 
 If C<$key> is linked to a value, then that value is removed from the database via
-L</purge>. Also available as C<purgeby_sk>
+L</purge>. Also available as C<purgeby_sk>.
+
+These two blocks are equivalent:
+	
+	# 1
+	my $v = $table->fetch($k);
+	$table->purge($v);
+	
+	# 2
+	$table->purgeby($k);
 
 =back
 

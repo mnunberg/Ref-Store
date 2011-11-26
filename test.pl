@@ -34,7 +34,6 @@ use Log::Fu { level=> "debug" };
 use lib "/home/mordy/src/Hash-Registry/lib";
 use Benchmark qw(:all);
 use Memory::Usage;
-use Devel::Leak;
 
 my $Htype = 'Hash::Registry::PP';
 GetOptions('x|xs' => \my $use_xs,
