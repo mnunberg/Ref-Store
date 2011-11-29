@@ -27,6 +27,18 @@ sub dump {
     $hrd->iprint("ENCAP: %s", $hrd->fmt_ptr($self->HRXSK_encap_getencap));
 }
 
+package Hash::Registry::XS::Attribute;
+use strict;
+use warnings;
+use Hash::Registry::XS::cfunc;
+
+*unlink_value   = \&HRXSATTR_unlink_value;
+*get_hash       = \&HRXSATTR_get_hash;
+*kstring        = \&HRXSATTR_kstring;
+
+@Hash::Registry::XS::Attribute::Encapsulating::ISA
+    = qw(Hash::Registry::XS::Attribute);
+
 package Hash::Registry::XS;
 use strict;
 use warnings;
@@ -36,8 +48,15 @@ use Log::Fu;
 
 #These two lines completely override the perl store/fetch code and utilize
 #pure C! - double the speed
-*store = *store_sk = \&HRA_store_sk;
-*fetch = *fetch_sk = \&HRA_fetch_sk;
+
+*store = *store_sk  = \&HRA_store_sk;
+*fetch = *fetch_sk  = \&HRA_fetch_sk;
+
+*store_a            = \&HRA_store_a;
+*fetch_a            = \&HRA_fetch_a;
+*dissoc_a           = \&HRA_dissoc_a;
+*unlink_a           = \&HRA_unlink_a;
+*attr_get           = \&HRA_attr_get;
 
 sub new_key {
     my ($self,$scalar) = @_;
@@ -63,7 +82,7 @@ sub dref_add_str {
 
 sub dref_del_ptr {
     my ($self,$value,$hashref) = @_;
-    HR_PL_del_action($value, $hashref);
+    HR_PL_del_action_container($value, $hashref);
 }
 
 

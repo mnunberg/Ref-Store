@@ -4,7 +4,7 @@ use ExtUtils::MakeMaker;
 
 my $XSFILE = 'Registry.xs';
 my $HDR = 'hreg.h';
-my @modules = qw(hr_pl hr_hrimpl hreg);
+my @modules = qw(hr_pl hr_hrimpl hr_implattr hreg);
 my $modstring = join(".o ", @modules) . ".o";
 
 my $GENERATED_FILES = "*.o Registry.* INLINE.h";

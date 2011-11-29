@@ -8,12 +8,18 @@ static int freehook(pTHX_ SV* target, MAGIC *mg);
 
 static MGVTBL vtbl = { .svt_free = &freehook };
 
+#define OURMAGIC_infree(mg) (mg)->mg_private
+
+
 static int
-freehook(pTHX_ SV* target, MAGIC *mg)
+freehook(pTHX_ SV* object, MAGIC *mg)
 {
-	HR_DEBUG("FREEHOOK: mg=%p, obj=%p", mg, target);
-	HR_DEBUG("Object refcount: %d", SvREFCNT(target));
-    HR_trigger_and_free_actions(_mg_action_list(mg));
+	HR_DEBUG("FREEHOOK: mg=%p, obj=%p", mg, object);
+	HR_DEBUG("Object refcount: %d", SvREFCNT(object));
+	
+	OURMAGIC_infree(mg) = 1;
+	
+    HR_trigger_and_free_actions(_mg_action_list(mg), object);
 }
 
 
@@ -67,7 +73,9 @@ get_our_magic(SV* objref, int create)
     Newxz(action_list, 1, HR_Action);
 	mg = sv_magicext(target, target, PERL_MAGIC_ext, &vtbl,
 					 (const char*)action_list, 0);
-    
+	
+    OURMAGIC_infree(mg) = 0;
+	
 	if(!mg) {
 		die("Couldn't create magic!");
 	} else {
@@ -142,8 +150,9 @@ HR_PL_add_actions(SV *objref, char *blob) {
     HR_add_actions_real(objref, (HR_Action*)blob);
 }
 
-void
-HR_PL_del_action(SV* objref, SV* hashref)
+
+static inline void pl_del_action_common(SV *objref, SV *hashref,
+										void *key, HR_KeyType_t ktype)
 {
 	MAGIC *mg = get_our_magic(objref, 0);
     HR_DEBUG("DELETE: O=%p, SV=%p", objref, hashref);
@@ -151,18 +160,41 @@ HR_PL_del_action(SV* objref, SV* hashref)
 		return;
 	}
 	
+	if(OURMAGIC_infree(mg)) {
+		while(HR_nullify_action(
+			_mg_action_list(mg), hashref, key, ktype) == HR_ACTION_DELETED);
+		/*no body*/
+		return;
+	}
+	
     int dv = HR_ACTION_NOT_FOUND;
-    while( (dv = HR_del_action(_mg_action_list(mg), hashref)) == HR_ACTION_DELETED );
+    while( (dv = HR_del_action(
+			_mg_action_list(mg), hashref, key, ktype)) == HR_ACTION_DELETED );
     /*no body*/
     HR_DEBUG("Delete done");
     if(dv == HR_ACTION_EMPTY) {
         free_our_magic(SvRV(objref));
     }
-    
+}
+
+#define gen_del_fn(suffix, argtype, ktype) \
+	void HR_PL_del_action_ ## suffix(SV *obj, SV *ctr, argtype arg) { \
+		pl_del_action_common(obj, ctr, (void*)arg, ktype); \
+	}
+
+gen_del_fn(ptr, UV, HR_KEY_TYPE_PTR);
+gen_del_fn(str, char*, HR_KEY_TYPE_STR);
+gen_del_fn(sv, SV*, HR_KEY_STYPE_PTR_RV);
+
+#undef gen_del_fn
+
+void HR_PL_del_action_container(SV *object, SV *hashref)
+{
+	pl_del_action_common(object, hashref, NULL, HR_KEY_TYPE_NULL);
 }
 
 void
-HR_PL_add_action_str(SV *objref, SV *hashref, const char *str)
+HR_PL_add_action_str(SV *objref, SV *hashref, char *str)
 {
 	int action_type;
 	
@@ -197,12 +229,7 @@ void
 HR_PL_add_action_ptr(SV* objref, SV *hashref)
 {
 	HR_Action actions[] = {
-		{
-			.key = SvRV(objref),
-			.hashref = hashref,
-			.ktype = HR_KEY_TYPE_PTR,
-			.atype = HR_ACTION_TYPE_DEL_HV
-		},
+		HR_DREF_FLDS_ptr_from_hv(SvRV(objref), hashref),
 		HR_ACTION_LIST_TERMINATOR
 	};
 	HR_add_actions_real(objref, actions);

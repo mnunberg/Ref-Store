@@ -1,0 +1,517 @@
+////////////////////////////////////////////////////////////////////////////////
+/// Hash::Registry API implementation (attributes)                           ///
+////////////////////////////////////////////////////////////////////////////////
+
+#include "hreg.h"
+#include "hrpriv.h"
+#include <string.h>
+#include <stdlib.h>
+
+
+#define ATTR_FIELDS_COMMON \
+    SV *table; \
+    HV *attrhash; \
+    unsigned char encap;
+
+typedef struct {
+    ATTR_FIELDS_COMMON
+} hrattr_simple;
+
+typedef struct {
+    ATTR_FIELDS_COMMON;
+    SV *obj_rv;
+    char *obj_paddr;
+} hrattr_encap;
+
+#define KT_DELIM "#"
+
+#ifdef HR_MAKE_PARENT_RV
+#define attr_parent_tbl(attr) SvRV((attr->table))
+#else
+#define attr_parent_tbl(attr) (attr->table)
+#endif
+
+#define attr_from_sv(sv) (hrattr_simple*)(SvPVX(sv))
+/*Declare a function which will be our trigger and proxy deletion/checking
+ of the hash*/
+
+#define attr_strkey(aobj, sz) ((char*)(((char*)(aobj))+sz))
+
+#define attr_getsize(attr)  \
+    ((attr->encap) ? sizeof(hrattr_encap) : sizeof(hrattr_simple))
+
+#define attr_encap_cast(attr) ((hrattr_encap*)attr)
+
+static inline SV *attr_get(SV *self, SV *attr, char *t, int options);
+static inline SV *attr_new_common(char *pkg, char *key, SV *table, int attrsize);
+
+static void attr_destroy_trigger(SV *self, SV *encap_obj);
+static void encap_attr_destroy_hook(SV *encap_obj, SV *attr_sv);
+
+static inline SV* attr_simple_new(char *pkg, char *astr, SV *table);
+static inline SV* attr_encap_new(char *pkg, char *astr, SV *encapped, SV *table);
+static inline SV* attr_new_common(char *pkg, char *astr, SV *table, int attrsz);
+static inline void attr_delete_from_vhash(SV *self, SV *value);
+static inline void attr_delete_value_from_attrhash(SV *self, SV *value);
+
+static inline SV*
+attr_new_common(char *pkg, char *key, SV *table, int attrsize)
+{
+    int keylen = strlen(key) + 1;
+    int bloblen = attrsize + keylen;
+    SV *self = mk_blessed_blob(pkg, bloblen);
+    hrattr_simple *attr = attr_from_sv(SvRV(self));
+    char *key_offset = attr_strkey(attr, attrsize);
+    Copy(key, key_offset, keylen, char);
+#ifdef HR_MAKE_PARENT_RV
+    attr->table = newSVsv(table)
+#else
+    attr->table = SvRV(table);
+#endif
+    attr->attrhash = newHV();
+    attr->encap = 0;
+    
+    HR_Action destroy_action[] = {
+        HR_DREF_FLDS_arg_for_cfunc(SvRV(self), &attr_destroy_trigger),
+        HR_ACTION_LIST_TERMINATOR
+    };
+    
+    HR_add_actions_real(self, destroy_action);
+    return self;
+}
+
+static inline SV
+*attr_encap_new(char *pkg, char *key, SV *obj, SV *table)
+{
+    SV *self = attr_new_common(pkg, key, table, sizeof(hrattr_encap));
+    hrattr_encap *attr = attr_encap_cast(attr_from_sv(SvRV(self)));
+    attr->obj_rv = newSVsv(obj);
+    attr->obj_paddr = (char*)SvRV(obj);
+    attr->encap = 1;
+    HR_Action encap_destroy_action[] = {
+        HR_DREF_FLDS_arg_for_cfunc(SvRV(self), (SV*)&encap_attr_destroy_hook),
+        HR_ACTION_LIST_TERMINATOR
+    };
+    HR_add_actions_real(obj, encap_destroy_action);
+    return self;
+}
+
+static inline SV
+*attr_simple_new(char *pkg, char *key, SV *table)
+{
+    return attr_new_common(pkg, key, table, sizeof(hrattr_simple));
+}
+
+
+SV  *HRXSATTR_get_hash(SV *self)
+{
+    hrattr_simple *attr = attr_from_sv(SvRV(self));
+    return newRV_inc((SV*)attr->attrhash);
+}
+
+char *HRXSATTR_kstring(SV *self)
+{
+    hrattr_simple *attr = attr_from_sv(SvRV(self));
+    char *ret = attr_strkey(attr, attr_getsize(attr));
+    return ret;
+}
+
+static inline SV*
+attr_get(SV *self, SV *attr, char *t, int options)
+{
+    char *attr_ustr = NULL, *attr_fullstr = NULL;
+    char smallbuf[128] = { '\0' };
+    char ptr_buf[128] = { '\0' };
+    SV *kt_lookup, *attr_lookup;
+    SV **kt_ent;
+    SV *aobj = NULL;
+    SV **a_ent;
+    
+    int attrlen = 0;
+    int on_heap = 0;
+    
+    get_hashes(REF2HASH(self),
+               HR_HKEY_LOOKUP_ATTR, &attr_lookup,
+               HR_HKEY_LOOKUP_KT, &kt_lookup,
+               HR_HKEY_LOOKUP_NULL
+            );
+    
+    
+    if(! (kt_ent = hv_fetch(REF2HASH(kt_lookup), t, strlen(t), 0))) {
+        die("Couldn't determine keytype '%s'", t);
+    }
+    
+    attrlen = strlen(SvPV_nolen(*kt_ent)) + 1;
+    
+    if(SvROK(attr)) {
+        attrlen += sprintf(ptr_buf, "%lu", SvRV(attr));
+        attr_ustr = ptr_buf;
+    } else {
+        attrlen += strlen(SvPV_nolen(attr));
+        attr_ustr = SvPV_nolen(attr);
+    }
+    
+    attrlen += sizeof(KT_DELIM) - 1;
+    
+    if(attrlen > 128) {
+        on_heap = 1;
+        Newx(attr_fullstr, attrlen, char);
+    } else {
+        attr_fullstr = smallbuf;
+    }
+    
+    *attr_fullstr = '\0';
+    
+    sprintf(attr_fullstr, "%s%s%s", SvPV_nolen(*kt_ent), KT_DELIM, attr_ustr);
+    HR_DEBUG("ATTRKEY=%s", attr_fullstr);
+    
+    a_ent = hv_fetch(REF2HASH(attr_lookup), attr_fullstr, attrlen-1, 0);
+    if(!a_ent) {
+        if( (options & STORE_OPT_O_CREAT) == 0) {
+            HR_DEBUG("Could not locate attribute and O_CREAT not specified");
+            goto GT_RET;
+        } else if(SvROK(attr)) {
+            aobj = attr_encap_new(PKG_ATTR_ENCAP, attr_fullstr, attr, self);
+            if( (options & STORE_OPT_STRONG_KEY) == 0) {
+                sv_rvweaken( ((hrattr_encap*)attr_from_sv(SvRV(aobj)))->obj_rv );
+            }
+        } else {
+            aobj = attr_simple_new(PKG_ATTR_SCALAR, attr_fullstr, self);
+        }
+        
+        a_ent = hv_store(REF2HASH(attr_lookup),
+                         attr_fullstr, attrlen-1,
+                         newSVsv(aobj), 0);
+        
+        /*Actual attribute entry is ALWAYS weak and is entirely dependent on vhash
+         entries*/
+        assert(a_ent);
+        sv_rvweaken(*a_ent);
+    } else {
+        aobj = *a_ent;
+    }
+    
+    GT_RET:
+    if(on_heap) {
+        Safefree(attr_fullstr);
+    }
+    HR_DEBUG("Returning %p", aobj);
+    return aobj;
+}
+
+void HRA_store_a(SV *self, SV *attr, char *t, SV *value, ...)
+{
+    SV *rlookup = NULL; //reverse lookup table
+    SV *vstring = newSVuv((UV)SvRV(value)); //reverse lookup key
+    SV *vhash   = NULL; //value's reverse hash
+    SV *astring = NULL; //attribute key for reverse hash
+    HE *a_r_ent = NULL; //lval-type HE for looking/storing attr in vhash
+    SV *ref_in_vhash = NULL; //attribute entry in reverse hash
+    SV *aobj    = NULL; //primary attribute entry, from attr_lookup
+    SV *vref    = NULL; //value's entry in attribute hash
+    SV *attrhash_ref = NULL; //reference for attribute hash, for adding actions
+    hrattr_simple *aptr; //our private attribute structure
+    
+    int options = STORE_OPT_O_CREAT;
+    int i;
+    
+    dXSARGS;
+    if ((items-4) % 2) {
+        die("Expected hash options or nothing (got %d)", items-3);
+    }
+    for(i=4;i<items;i+=2) {
+        _chkopt(STRONG_ATTR, i, options);
+        _chkopt(STRONG_VALUE, i, options);
+    }
+    
+    aobj = attr_get(self, attr, t, options);
+    if(!aobj) {
+        die("attr_get() failed to return anything");
+    }
+    
+    aptr = attr_from_sv(SvRV(aobj));
+    assert(SvROK(aobj));
+    astring = newSVuv((UV)SvRV(aobj));
+    
+    get_hashes((HV*)SvRV(self), HR_HKEY_LOOKUP_REVERSE, &rlookup, HR_HKEY_LOOKUP_NULL);
+    vhash = get_vhash_from_rlookup(rlookup, vstring, VHASH_INIT_FULL);
+    a_r_ent = hv_fetch_ent(REF2HASH(vhash), astring, 1, 0);
+    ref_in_vhash = HeVAL(a_r_ent);
+    if(!SvROK(ref_in_vhash)) {
+        HR_DEBUG("Creating new reverse entry");
+        new_hashval_ref(ref_in_vhash, SvRV(aobj));
+        SvREFCNT_inc(SvRV(aobj));
+    } else {
+        goto GT_RET; //We already exist in here
+    }
+    /*In this case, the attribute's primary reference is, again, inside each
+     vhash entry*/
+    
+    if(!SvTRUE(hv_scalar(aptr->attrhash))) {
+        /*First entry and we've already inserted our reverse entry*/
+        SvREFCNT_dec(SvRV(aobj));
+    }
+    
+    vref = newSVsv(value);
+    if(hv_store_ent(aptr->attrhash, vstring, vref, 0)) {
+        if( (options & STORE_OPT_STRONG_VALUE) == 0) {
+            sv_rvweaken(vref);
+        }
+    } else {
+        SvREFCNT_dec(vref);
+    }
+    
+    RV_Newtmp(attrhash_ref, (SV*)aptr->attrhash);
+    
+    HR_Action v_actions[] = {
+        HR_DREF_FLDS_ptr_from_hv(SvRV(value), attrhash_ref),
+        HR_ACTION_LIST_TERMINATOR
+    };
+    
+    HR_add_actions_real(value, v_actions);
+        
+    GT_RET:
+    SvREFCNT_dec(vstring);
+    SvREFCNT_dec(astring);
+    if(attrhash_ref) {
+        RV_Freetmp(attrhash_ref);
+    }
+    XSRETURN(0);
+}
+
+void HRA_fetch_a(SV *self, SV *attr, char *t)
+{
+    dXSARGS;
+    SP -= 3;
+    
+    if(GIMME_V == G_VOID) {
+        XSRETURN(0);
+    }
+    
+    SV *aobj = attr_get(self, attr, t, 0);
+    if(!aobj) {
+        HR_DEBUG("Can't find attribute!");
+        XSRETURN_EMPTY;
+    } else {
+        HR_DEBUG("Found aobj=%p", aobj);
+    }
+    hrattr_simple *aptr = attr_from_sv(SvRV(aobj));
+    
+    HR_DEBUG("Attrhash=%p", aptr->attrhash);
+    int nkeys = hv_iterinit(aptr->attrhash);
+    HR_DEBUG("We have %d keys", nkeys);
+    if(GIMME_V == G_SCALAR) {
+        HR_DEBUG("Scalar return value requested");
+        XSRETURN_IV(nkeys);
+    }
+    HR_DEBUG("Will do some stack voodoo");
+    EXTEND(sp, nkeys);
+    HE *cur = hv_iternext(aptr->attrhash);
+    for(; cur != NULL; cur = hv_iternext(aptr->attrhash))
+    {
+        XPUSHs(sv_mortalcopy(hv_iterval(aptr->attrhash, cur)));
+    }
+    PUTBACK;
+}
+
+SV* HRA_attr_get(SV *self, SV *attr, char *t)
+{
+    SV *ret = attr_get(self, attr, t, 0);
+    if(ret) {
+        ret = newSVsv(ret);
+    } else {
+        return &PL_sv_undef;
+    }
+}
+
+void HRA_dissoc_a(SV *self, SV *attr, char *t, SV *value)
+{
+    SV *aobj = attr_get(self, attr, t, 0);
+    if(!aobj) {
+        return;
+    }
+    HR_DEBUG("Dissoc called");
+    attr_delete_value_from_attrhash(aobj, value);
+    attr_delete_from_vhash(aobj, value);
+}
+
+void HRA_unlink_a(SV *self, SV* attr, char *t)
+{
+    HR_DEBUG("UNLINK_ATTR")
+    SV *aobj = attr_get(self, attr, t, 0);
+    if(!aobj) {
+        return;
+    }
+    attr_destroy_trigger(SvRV(aobj), NULL);
+    HR_DEBUG("UNLINK_ATTR DONE");
+}
+
+
+static inline void attr_delete_from_vhash(SV *self, SV *value)
+{
+    hrattr_simple *attr = attr_from_sv(SvRV((self)));
+    //UN_del_action(value, SvRV(self));
+    SV *vaddr = newSVuv((UV)SvRV(value));
+    SV *rlookup;
+    SV *vhash;
+        
+    mk_ptr_string(astr, SvRV(self));
+    
+    get_hashes((HV*)attr_parent_tbl(attr),
+               HR_HKEY_LOOKUP_REVERSE, &rlookup, HR_HKEY_LOOKUP_NULL);
+    
+    vhash = get_vhash_from_rlookup(rlookup, vaddr, 0);
+    
+    if(vhash) {
+        HR_DEBUG("Deleting '%s' from vhash=%p", astr, SvRV(vhash));
+        hv_delete(REF2HASH(vhash), astr, strlen(astr), G_DISCARD);
+        if(!HvKEYS(REF2HASH(vhash))) {
+            HR_DEBUG("Vhash empty");
+            HR_PL_del_action_container(value, rlookup);
+            hv_delete_ent(REF2HASH(rlookup), vaddr, G_DISCARD, 0);
+        }
+    }
+
+}
+
+static inline void attr_delete_value_from_attrhash(SV *self, SV *value)
+{
+    hrattr_simple *attr = attr_from_sv(SvRV((self)));
+    SV *vaddr = newSVuv((UV)SvRV(value));
+    SV *attrhash_ref;
+    RV_Newtmp(attrhash_ref, (SV*)attr->attrhash);
+    
+    HR_DEBUG("Deleting action vobj=%p ::  attrhash=%p",
+             SvRV(value), SvRV(attrhash_ref));
+    HR_PL_del_action_container(value, attrhash_ref);
+    hv_delete_ent(attr->attrhash, vaddr, G_DISCARD, 0);
+    
+    RV_Freetmp(attrhash_ref);
+    SvREFCNT_dec(vaddr);
+    HR_DEBUG("Done!");
+}
+
+void HRXSATTR_unlink_value(SV *self, SV *value)
+{
+    attr_delete_value_from_attrhash(self, value);
+    attr_delete_from_vhash(self, value);
+}
+
+
+/*This function is called when the attribute object is destroyed. This can
+ happen in the following cases:
+ 
+ All value entries have deleted us from their vhashes:
+    * Entries in the attribute hash will be deleted at the end of this function.
+    * Values are still alive, but their possibly weak references are undef'd,
+        so we convert the stringified pointer into a real one
+    * If encapsulated object is still alive, the obj_paddr field should be true,
+        in which case, we delete actions tied to it, check the weakref to see
+        if that is defined, and decrease its refcount
+    
+Encapsulated object has been deleted
+    * Value entries may possibly still be alive, in which case we check if they
+        need to have their vhashes deleted
+    * Delete our actions from the encapsulated object
+ */
+ 
+/*First argument is the object, second is the argument */
+
+static void encap_attr_destroy_hook(SV *encap_obj, SV *attr_sv)
+{
+    HR_DEBUG("Encap hook called!");
+    hrattr_encap *aencap = attr_encap_cast(attr_from_sv(attr_sv));
+    aencap->obj_paddr = NULL;
+    SvREFCNT_dec(aencap->obj_rv);
+    aencap->obj_rv = NULL;
+    
+    SvREFCNT_inc(attr_sv);
+    attr_destroy_trigger(attr_sv, NULL);
+    SvREFCNT_dec(attr_sv);
+}
+
+static void attr_destroy_trigger(SV *self_sv, SV *encap_obj)
+{
+    HR_DEBUG("self_sv=%p", self_sv);
+    
+    HR_DEBUG("Attr destroy hook");
+    HR_DEBUG("We are ATTR=%p", self_sv);
+    //sv_dump(self_sv);
+    hrattr_simple *attr = attr_from_sv(self_sv);
+    HR_DEBUG("hrattr=%p", attr);
+    HV *parent = attr_parent_tbl(attr);
+    HR_DEBUG("Parent=%p", parent);
+    SV *rlookup = NULL, *attr_lookup = NULL;
+    
+    if(SvREFCNT(parent)) {
+        get_hashes(parent,
+                   HR_HKEY_LOOKUP_REVERSE, &rlookup,
+                   HR_HKEY_LOOKUP_ATTR, &attr_lookup,
+                   HR_HKEY_LOOKUP_NULL);
+        HR_DEBUG("rlookup=%p, attr_lookup=%p", rlookup, attr_lookup);
+    } else {
+        HR_DEBUG("Main lookup table being destroyed?");
+        parent = NULL;
+    }
+    
+    
+    char *ktmp;
+    int attrsz = attr_getsize(attr);
+    SV *vtmp, *vhash;
+    I32 tmplen;
+    
+    mk_ptr_string(oaddr, self_sv);
+    int oaddr_len = strlen(oaddr);
+    
+    SV *attrhash_ref = NULL, *self_ref = NULL;
+    RV_Newtmp( attrhash_ref, ((SV*)attr->attrhash) );
+    RV_Newtmp( self_ref, self_sv );
+        
+    HR_PL_del_action_container(self_ref, (SV*)&attr_destroy_trigger);
+    HR_DEBUG("Deleted self destroy hook");
+    
+    U32 old_refcount = SvREFCNT(self_sv);
+    HR_DEBUG("Our refcount is now %lu");
+    
+    if(attr->encap) {
+        hrattr_encap *aencap = (hrattr_encap*)attr;
+        if(aencap->obj_rv) {
+            SvREFCNT_dec( aencap->obj_rv );
+        }
+        if(aencap->obj_paddr) {
+            SV *encap_ref = NULL;
+            RV_Newtmp(encap_ref, (SV*)aencap->obj_paddr);
+            HR_PL_del_action_container(encap_ref,
+                                 (SV*)&encap_attr_destroy_hook);
+            RV_Freetmp(encap_ref);
+            HR_DEBUG("Deleted encap destroy hook");
+        }
+    }
+    
+    if(attr_lookup) {
+        HR_DEBUG("Deleting our reverse lookup attribute entry..");
+        hv_delete(REF2HASH(attr_lookup),
+                  attr_strkey(attr, attrsz),
+                  strlen(attr_strkey(attr, attrsz)),
+                  G_DISCARD);
+    }
+        
+    while( (vtmp = hv_iternextsv(attr->attrhash, &ktmp, &tmplen)) ) {
+        SV *vptr, *vref;
+        sscanf(ktmp, "%lu", &vptr); /*Don't ask.. also, uses slightly less memory*/
+        RV_Newtmp(vref, vptr);
+        attr_delete_value_from_attrhash(self_ref, vref);
+        if(SvROK(vref) && parent) {
+            HR_DEBUG("Deleting vhash entry");
+            attr_delete_from_vhash(self_ref, vref);
+        } else {
+            HR_DEBUG("Eh?");
+        }
+        RV_Freetmp(vref);
+    }
+    
+    SvREFCNT_dec(attr->attrhash);
+    RV_Freetmp(self_ref);
+    RV_Freetmp(attrhash_ref);
+    HR_DEBUG("Attr destroy done");
+}

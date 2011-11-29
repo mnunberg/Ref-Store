@@ -18,6 +18,7 @@ t/00-impl_xs.t
 t/common.pm
 t/00-impl_pp.t
 hreg.c
+hrpriv.h
 hr_hrimpl.c
 hr_pl.c
 hreg.h

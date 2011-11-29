@@ -1,54 +1,27 @@
 #include "hreg.h"
-#include <perl.h>
+#include "hrpriv.h"
+
 #include <string.h>
-#include <stdarg.h>
 
-#define REF2HASH(ref) ((HV*)(SvRV(ref)))
-
-#define HR_HKEY_RLOOKUP "reverse"
-#define HR_HKEY_FLOOKUP "forward"
-#define HR_HKEY_SLOOKUP "scalar_lookup"
-
-enum {
-    HR_HKEY_LOOKUP_NULL = 0,
-    HR_HKEY_LOOKUP_SCALAR = 1,
-    HR_HKEY_LOOKUP_FORWARD = 2,
-    HR_HKEY_LOOKUP_REVERSE = 3,
-};
-
-typedef char* HSpec[2];
-
-static HSpec LookupKeys[] = {
+HSpec HR_LookupKeys[] = {
     {HR_HKEY_SLOOKUP, (char*)sizeof(HR_HKEY_SLOOKUP)-1},
     {HR_HKEY_FLOOKUP, (char*)sizeof(HR_HKEY_FLOOKUP)-1},
-    {HR_HKEY_RLOOKUP, (char*)sizeof(HR_HKEY_RLOOKUP)-1}
+    {HR_HKEY_RLOOKUP, (char*)sizeof(HR_HKEY_RLOOKUP)-1},
+    {HR_HKEY_KTYPES, (char*)sizeof(HR_HKEY_KTYPES)-1},
+    {HR_HKEY_ALOOKUP, (char*)sizeof(HR_HKEY_ALOOKUP)-1}
 };
 
 typedef char hrk_simple;
-typedef struct hrk_encap_S hrk_encap;
-
-struct hrk_encap_S {
-    SV* obj_ptr;
-    SV* table;
-    char *obj_paddr;
-}; /*24 bytes*/
-
-#define HRATTR_TIEHASH_PKG "Hash::Registry::XS::Attribute::TH"
 
 typedef struct {
-    SV *table;
-    HV *attrhash;
-} hrattr_simple;
+    SV* obj_ptr;
+    SV* table;
+    void *obj_paddr;
+} hrk_encap;
 
 
 static inline HV*
 get_v_hashref(hrk_encap *ke, SV* value);
-
-static inline void
-get_hashes(HV *table, ...);
-
-static inline SV*
-mk_blessed_blob(char *pkg, int size);
 
 #ifdef HR_MAKE_PARENT_RV
 #define ketbl_from_ke(ke) (HV*)(SvROK(ke->table) ? NULL : SvRV(ke->table))
@@ -60,7 +33,7 @@ mk_blessed_blob(char *pkg, int size);
     ((hrk_encap*)(SvPVX(svp)))
 
 
-static void k_encap_cleanup(SV *ksv)
+static void k_encap_cleanup(SV *ksv, SV *_)
 {
     /*Find our forward entry from the stringified object pointer*/
     hrk_encap *ke = keptr_from_sv(ksv);
@@ -86,8 +59,8 @@ static void k_encap_cleanup(SV *ksv)
         HR_DEBUG("Object has been deleted.");
     } else {
         HR_DEBUG("Freeing magic triggers on encapsulated object");
-        HR_PL_del_action(ke->obj_ptr, scalar_lookup);
-        HR_PL_del_action(ke->obj_ptr, forward);
+        HR_PL_del_action_container(ke->obj_ptr, scalar_lookup);
+        HR_PL_del_action_container(ke->obj_ptr, forward);
         HR_DEBUG("Done!");
     }
     
@@ -116,7 +89,7 @@ static void k_encap_cleanup(SV *ksv)
         if(!SvTRUE(reverse_count)) {
             HR_DEBUG("Removing value's reverse hash");
             hv_delete( REF2HASH(reverse), stored_s, strlen(stored_s), G_DISCARD);
-            HR_PL_del_action(*stored, reverse);
+            HR_PL_del_action_container(*stored, reverse);
         }
     } else {
         HR_DEBUG("Can't find anything!");
@@ -149,7 +122,7 @@ void HRXSK_encap_link_value(SV *self, SV *value)
         {
             .ktype = HR_KEY_TYPE_PTR,
             .atype = HR_ACTION_TYPE_DEL_HV,
-            .key   = SvRV(ke->obj_ptr),
+            .key   = (char*)SvRV(ke->obj_ptr),
 #ifdef HR_MAKE_PARENT_RV
             .flags = HR_FLAG_HASHREF_WEAKEN,
 #endif
@@ -198,7 +171,7 @@ SV* HRXSK_encap_new(char *package, SV* object, SV *table, SV* forward, SV* scala
     }
     hrk_encap *keptr = keptr_from_sv(SvRV(ksv));
     keptr->obj_ptr = newRV_inc(SvRV(object));
-    keptr->obj_paddr = SvRV(object);
+    keptr->obj_paddr = (char*)SvRV(object);
     
 #ifdef HR_MAKE_PARENT_RV
     keptr->table = newSVsv(table);
@@ -216,22 +189,12 @@ SV* HRXSK_encap_new(char *package, SV* object, SV *table, SV* forward, SV* scala
     hv_store( REF2HASH(scalar_lookup), key_s, strlen(key_s), self_hval, 0);
     
     HR_Action encap_actions[] = {
-        {
-            .ktype = HR_KEY_TYPE_PTR,
-            .key = (char*)SvRV(object),
-            .atype = HR_ACTION_TYPE_DEL_HV,
-            .hashref = scalar_lookup
-        },
+        HR_DREF_FLDS_ptr_from_hv(SvRV(object), scalar_lookup),
         HR_ACTION_LIST_TERMINATOR
     };
     
     HR_Action key_actions[] = {
-        {
-            .ktype = HR_KEY_TYPE_PTR,
-            .atype = HR_ACTION_TYPE_CALL_CFUNC,
-            .key = (char*)SvRV(ksv),
-            .hashref = (SV*)&k_encap_cleanup,
-        },
+        HR_DREF_FLDS_arg_for_cfunc(SvRV(ksv), &k_encap_cleanup),
         HR_ACTION_LIST_TERMINATOR
     };
     
@@ -241,32 +204,7 @@ SV* HRXSK_encap_new(char *package, SV* object, SV *table, SV* forward, SV* scala
     return ksv;
 }
 
-static inline void
-get_hashes(HV *table, ...)
-{
-    va_list ap;
-    va_start(ap, table);
-    
-    while(1) {
-        int ltype = (int)va_arg(ap, int);
-        if(!ltype) {
-            break;
-        }
-        SV **hashptr = (SV**)va_arg(ap, SV**);
-        
-        HSpec *kspec = (HSpec*)LookupKeys[ltype-1];
-        char *hkey = (*kspec)[0];
-        int klen = (*kspec)[1];
-        SV **result = hv_fetch(table, hkey, klen, 0);
-        
-        if(!result) {
-            *hashptr = NULL;
-        } else {
-            *hashptr = *result;
-        }
-    }
-    va_end(ap);
-}
+
 
 static inline HV*
 get_v_hashref(hrk_encap *ke, SV* value)
@@ -290,27 +228,13 @@ get_v_hashref(hrk_encap *ke, SV* value)
     mk_ptr_string(vstring, SvRV(value));
     SV **privhash = hv_fetch(REF2HASH(reverse), vstring, strlen(vstring), 0);
     if(privhash) {
-        return SvRV(*privhash);
+        return (HV*)SvRV(*privhash);
     } else {
         HR_DEBUG("Can't get privhash from hv_fetch");
         return NULL;
     }
 }
 
-static inline SV*
-mk_blessed_blob(char *pkg, int size)
-{
-    SV *referrant = newSV(size);
-    HV *stash = gv_stashpv(pkg, 0);
-    if(!stash) {
-        die("Can't get stash for %pkg");
-        SvREFCNT_dec(referrant);
-        return NULL;
-    }
-    SV *self = newRV_noinc(referrant);
-    sv_bless(self, stash);
-    return self;
-}
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
 /// Scalar Key Functions                                                     ///
@@ -349,20 +273,8 @@ SV* HRXSK_new(char *package, char *key, SV *forward, SV *scalar_lookup)
     sv_rvweaken(*scalar_entry);
     
     HR_Action actions[] = {
-        {
-            .ktype = HR_KEY_TYPE_STR,
-            .key = key_offset,
-            .hashref = scalar_lookup,
-            .atype = HR_ACTION_TYPE_DEL_HV,
-            .flags = HR_FLAG_STR_NO_ALLOC
-        },
-        {
-            .ktype = HR_KEY_TYPE_STR,
-            .key = key_offset,
-            .hashref = forward,
-            .atype = HR_ACTION_TYPE_DEL_HV,
-            .flags = HR_FLAG_STR_NO_ALLOC
-        },
+        HR_DREF_FLDS_Estr_from_hv(key_offset, scalar_lookup),
+        HR_DREF_FLDS_Estr_from_hv(key_offset, forward),
         HR_ACTION_LIST_TERMINATOR
     };
     
@@ -387,17 +299,6 @@ char * HRXSK_kstring(SV *obj)
  When applicable, C statements are prefixed with commented perl equivalents
 */
 
-static enum {
-    STORE_OPT_STRONG_KEY    = 1 << 0,
-    STORE_OPT_STRONG_VALUE  = 1 << 1,
-    STORE_OPT_O_CREAT       = 1 << 2
-} HR_KeyOptions;
-
-#define PKG_KEY_SCALAR "Hash::Registry::XS::Key"
-#define PKG_KEY_ENCAP "Hash::Registry::XS::Key::Encapsulating"
-#define STROPT_STRONG_KEY "StrongKey"
-#define STROPT_STRONG_VALUE "StrongValue"
-#define STROPT_STRONG_ATTR "StrongAttr"
 
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
@@ -490,7 +391,7 @@ void HRA_store_sk(SV *self, SV *key, SV *value, ...)
     if(!SvROK(value)) {
         die("Value must be a reference!");
     }
-    HE *vhash_ent; //Value's reverse entry in reverse table
+
     SV *vhash; //Value's lookup references
     
     int key_is_ref = SvROK(key);
@@ -504,16 +405,8 @@ void HRA_store_sk(SV *self, SV *key, SV *value, ...)
     }
     
     for(i = 3; i < items; i += 2) {
-    #define _chkopt(option) \
-        if(strcmp(STROPT_ ## option, SvPV_nolen(ST(i))) == 0 \
-        && SvTRUE(ST(i+1))) { \
-            iopts |= STORE_OPT_ ## option; \
-            HR_DEBUG("Found option %s", STROPT_ ## option); \
-            continue; \
-        }
-        _chkopt(STRONG_VALUE);
-        _chkopt(STRONG_KEY);
-        #undef _chkopt
+        _chkopt(STRONG_VALUE, i, iopts);
+        _chkopt(STRONG_KEY, i, iopts);
     }
     
     kobj = ukey2ikey(self, key, &existing_ent, iopts);
@@ -529,17 +422,8 @@ void HRA_store_sk(SV *self, SV *key, SV *value, ...)
                HR_HKEY_LOOKUP_REVERSE, &rlookup,
                HR_HKEY_LOOKUP_NULL);
     /*Get value hashref*/
-    vhash_ent = hv_fetch_ent(REF2HASH(rlookup), vstring, 1, 0);
-    vhash = HeVAL(vhash_ent);
-    
-    if(!SvROK(vhash)) {
-        SvUPGRADE(vhash, SVt_RV);
-        HV *real_hash = newHV();
-        SvRV_set(vhash, real_hash);
-        SvROK_on(vhash);
-        HR_DEBUG("Inserted new value entry, refcount=%d", SvREFCNT(real_hash));
-    }
-    
+    vhash = get_vhash_from_rlookup(rlookup, vstring, 1);
+    assert(vhash);
     /*PP: $self->reverse->{$vstring}->{$kstring} = $kobj*/
     hv_store_ent(REF2HASH(vhash), kstring, kobj, 0);
     
@@ -599,59 +483,3 @@ SV *HRA_fetch_sk(SV *self, SV *key)
     return ret;
 }
 
-////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////
-/// Hash::Registry API implementation (attributes)                           ///
-////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////
-#ifdef HR_MAKE_PARENT_RV
-#define attr_parent_tbl(attr) SvRV((attr->table))
-#else
-#define attr_parent_tbl(attr) (attr->table)
-#endif
-
-#define attr_from_sv(sv) (hrattr_simple*)(SvPVX(sv))
-/*Declare a function which will be our trigger and proxy deletion/checking
- of the hash*/
-
-typedef struct {
-    SV *vobj;
-    hrattr_simple *attr;
-} attr_delspec;
-
-static void attr_unlink_trigger(attr_delspec *spec)
-{
-    
-}
-
-static inline void attr_unlink_real(SV *vsv, hrattr_simple *attr)
-{
-    
-}
-
-SV *HRXSATTR_new(char *pkg, char *key, SV *table)
-{
-    int keylen = strlen(key) + 1;
-    int bloblen = sizeof(hrattr_simple) + keylen;
-    SV *self = mk_blessed_blob(pkg, bloblen);
-    hrattr_simple *attr = SvPVX(SvRV(self));
-    
-    char *key_offset = (char*)(attr + sizeof(hrattr_simple));
-
-#ifdef HR_MAKE_PARENT_RV
-    attr->table = newSVsv(table);
-#else
-    attr->table = SvRV(table);
-#endif
-    attr->attrhash = newHV();
-    return self;
-}
-
-SV *HRXSATTR_unlink_value(SV *self, SV *vobj)
-{
-    hrattr_simple *attr = attr_from_sv(SvRV(self));
-    SV *tmpref = newRV_inc(attr->attrhash);
-    HR_PL_del_action(vobj, tmpref);
-    mk_ptr_string(vobj_s, SvRV(vobj));
-    
-}

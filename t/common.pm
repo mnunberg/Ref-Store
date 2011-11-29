@@ -127,6 +127,10 @@ sub test_scalar_attr {
     
     $hash->dissoc_a(42, $t, $v);
     ok(!$hash->has_value($v), "Value automatically deleted");
+    
+    use Data::Dumper;
+    print Dumper($hash);
+    
     ok(!$hash->has_attr(42, $t), "Attribute automatically deleted");
     my $v2 = ValueObject->new();
     
@@ -135,6 +139,7 @@ sub test_scalar_attr {
     $hash->unlink_a(42, $t);
     ok(!($hash->has_attr(42, $t) || $hash->has_value($v) || $hash->has_value($v2)),
        "Totally deleted!");
+    print Dumper($hash);
 }
 
 sub test_object_attr {
@@ -160,6 +165,7 @@ sub test_object_attr {
         $hash->store_a($tmpattr, $t, $v);
     }
     ok(!$hash->has_value($v), "Attribute object GC");
+    print Dumper($hash);
     
     #Test value GC
     $attr = KeyObject->new();
@@ -168,6 +174,7 @@ sub test_object_attr {
     ok(!($hash->has_value($v)||$hash->has_attr($attr,$t)),
        "Attribute object Value GC");
     #print Dumper($hash);
+    diag "Attribute tests done";
 }
 
 use constant {
@@ -177,6 +184,7 @@ use constant {
     KEY_MEH  => '_key_meh'
 };
 sub test_chained_basic {
+    diag "Chained tests";
     my $hash = $Impl->new();
     
     ValueObject->reset_counter();

@@ -30,7 +30,7 @@ use strict;
 use warnings;
 use Data::Dumper;
 use Getopt::Long;
-use Log::Fu { level=> "debug" };
+use Log::Fu { level=> "debug", target => \*STDOUT };
 use lib "/home/mordy/src/Hash-Registry/lib";
 use Benchmark qw(:all);
 use Memory::Usage;
@@ -150,8 +150,10 @@ sub single_pass {
 		
 		my $result_count = 0;
 		timethis(1, sub {
-			map { $result_count += scalar $Hash->fetch_a(@$_) }
-				@attrpairs;
+			foreach my $apair (@attrpairs) {
+				my @tmp = $Hash->fetch_a(@$apair);
+				$result_count += scalar @tmp;
+			}
 		}, "Attribute (FETCH)");
 		log_info("Got total $result_count entries");
 		
@@ -186,7 +188,8 @@ sub single_pass {
 		scalar values %{$Hash->forward},
 		scalar values %{$Hash->reverse}
 	);
-	$Hash->dump();
+	#$Hash->dump();
+	#print Dumper($Hash);
 }
 
 my $use_all = !($use_xs||$use_pp||$use_sweep);
@@ -231,6 +234,7 @@ foreach my $st (@{$Mu->state()}) {
 }
 
 undef $Mu;
+use Scalar::Util qw(weaken);
 
 sub compare_simple {
 	my %simplehash;
@@ -254,6 +258,15 @@ sub compare_simple {
 	timethis(1, sub {
 		%simplehash = ();
 	}, "Normal hash: DELETE");
+	
+	%simplehash = ();
+	timethis(1, sub {
+		foreach my $i (0..$i_END-1) {
+			foreach my $a (qw(attr1 att2 att3 attr4)) {
+				weaken($simplehash{$a}->{$vals[$i]+0} = $vals[$i]);
+			}
+		}
+	}, "Normal Hash, ATTR STORE");
 }
 
 compare_simple();

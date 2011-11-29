@@ -329,10 +329,6 @@ sub attr_get {
 		($self->keytypes->{$t} or die "Can't find attribute type $t") .
 		$attr . (ref $attr ? $attr + 0 : $attr);
 	
-#	my $attr_s = ref $attr ? $attr + 0 : $attr;
-#	my $attr_t = $self->keytypes->{$t};
-#	die "Unknown attribute type '$t'" unless $attr_t;
-#    my $ustr = $attr_t . $attr_s;
     my $aobj = $self->attr_lookup->{$ustr};
     return $aobj if $aobj;
     
@@ -408,13 +404,11 @@ sub dissoc_a {
 		log_err("Can't find attribute for $t$attr");
 		return;
 	}
-	#log_errf("DELATTR: A=%d V=%d", $aobj+0, $value+0);
-    return unless $aobj;
 	my $attrhash = $aobj->get_hash;
 	delete $attrhash->{$value+0};
 	delete $self->reverse->{$value+0}->{$aobj+0};
 	$self->dref_del_ptr($value, $attrhash, $value+0);
-	
+
 	$aobj->unlink_value($value);
 	$self->maybe_cleanup_value($value);
 }
@@ -423,17 +417,35 @@ sub unlink_a {
     my ($self,$attr,$t) = @_;
     my $aobj = $self->attr_get($attr, $t);
 	my $attrhash = $aobj->get_hash;
-    return unless $aobj;
+    return unless $attrhash;
+	
 	
 	while (my ($k,$v) = each %$attrhash) {
 		$self->dref_del_ptr($v, $attrhash, $v+0);
 		delete $attrhash->{$k};
 		delete $self->reverse->{$v+0}->{$aobj+0};
+		$aobj->unlink_value($v);
 		$self->maybe_cleanup_value($v);
 	}
 }
 
 *lexists_a = \&has_attr;
+#use Carp qw(cluck);
+#sub DESTROY {
+#	cluck("bye!");
+#}
+
+sub DESTROY {
+	my $self = shift;
+	foreach my $aobj (values %{$self->attr_lookup}) {
+		foreach my $v (values %{$aobj->get_hash}) {
+			$self->purge($v);
+		}
+	}
+	foreach my $v (values %{$self->forward}) {
+		$self->purge($v);
+	}
+}
 
 1;
 
