@@ -1,4 +1,4 @@
-package Hash::Registry::PP::Magic;
+package Ref::Store::PP::Magic;
 use strict;
 use warnings;
 use Variable::Magic qw(cast dispell wizard getdata);

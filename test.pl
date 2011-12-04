@@ -31,11 +31,11 @@ use warnings;
 use Data::Dumper;
 use Getopt::Long;
 use Log::Fu { level=> "debug", target => \*STDOUT };
-use lib "/home/mordy/src/Hash-Registry/lib";
+use lib "/home/mordy/src/Ref-Store/lib";
 use Benchmark qw(:all);
 use Memory::Usage;
 
-my $Htype = 'Hash::Registry::PP';
+my $Htype = 'Ref::Store::PP';
 GetOptions('x|xs' => \my $use_xs,
 	'p|pp' => \my $use_pp,
 	'sweeping' => \my $use_sweep,
@@ -176,7 +176,7 @@ sub single_pass {
 		@klist2 = ();
 	}, "Delete");
 	
-	if($Hash->isa('Hash::Registry::Sweeping')) {
+	if($Hash->isa('Ref::Store::Sweeping')) {
 		log_warn("Sweeping..");
 		$Hash->sweep();
 	}
@@ -205,7 +205,7 @@ while (@impl_map) {
 	if(!$enabled && !$use_all) {
 		next;
 	}
-	push @EnabledImplementations, 'Hash::Registry::'.$backend;
+	push @EnabledImplementations, 'Ref::Store::'.$backend;
 }
 
 foreach (1..$Cycles) {

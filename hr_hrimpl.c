@@ -303,7 +303,7 @@ char * HRXSK_kstring(SV *obj)
 
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
-/// Hash::Registry API implementation (keys)                                 ///
+/// Ref::Store API implementation (keys)                                 ///
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
 static inline SV* ukey2ikey(
@@ -350,7 +350,7 @@ static inline SV* ukey2ikey(
         HR_HKEY_LOOKUP_NULL);
     
     /*
-    PP: sub Hash::Registry::XS::new_key($self,$ukey) {
+    PP: sub Ref::Store::XS::new_key($self,$ukey) {
         if(ref $key) {
             HRXSK_new(PKG_KEY_SCALAR, $key, $self->forward, $self->scalar_lookup);
         } else {

@@ -1,11 +1,11 @@
-package Hash::Registry::PP::Key;
+package Ref::Store::PP::Key;
 use strict;
 use warnings;
 use Scalar::Util qw(weaken refaddr);
-use Hash::Registry::Common;
-use Hash::Registry::PP::Magic;
+use Ref::Store::Common;
+use Ref::Store::PP::Magic;
 
-use base qw(Hash::Registry::Key);
+use base qw(Ref::Store::Key);
 
 sub new {
     my ($cls,$scalar,$table) = @_;
@@ -28,12 +28,12 @@ sub new {
 #    delete $self->[HR_KFLD_TABLEREF]->scalar_lookup->{$self->[HR_KFLD_STRSCALAR]};
 #}
 
-package Hash::Registry::PP::Key::Encapsulating;
+package Ref::Store::PP::Key::Encapsulating;
 use strict;
 use warnings;
-use base qw(Hash::Registry::PP::Key);
-use Hash::Registry::Common;
-use Hash::Registry::PP::Magic;
+use base qw(Ref::Store::PP::Key);
+use Ref::Store::Common;
+use Ref::Store::PP::Magic;
 use Scalar::Util qw(weaken isweak);
 use Log::Fu;
 use constant {
@@ -147,19 +147,19 @@ sub DESTROY {
     #log_info("Done");
 }
 
-package Hash::Registry::PP;
+package Ref::Store::PP;
 use strict;
 use warnings;
 use Scalar::Util qw(weaken refaddr);
-use base qw(Hash::Registry);
-use Hash::Registry::PP::Magic;
+use base qw(Ref::Store);
+use Ref::Store::PP::Magic;
 
 use Log::Fu { level => "debug" };
 
 sub new_key {
     my ($self,$ukey) = @_;
-    my $cls = ref $ukey ? 'Hash::Registry::PP::Key::Encapsulating' :
-        'Hash::Registry::PP::Key';
+    my $cls = ref $ukey ? 'Ref::Store::PP::Key::Encapsulating' :
+        'Ref::Store::PP::Key';
     $cls->new($ukey, $self);
 }
 

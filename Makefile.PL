@@ -2,18 +2,18 @@ use strict;
 use warnings;
 use ExtUtils::MakeMaker;
 
-my $XSFILE = 'Registry.xs';
+my $XSFILE = 'Store.xs';
 my $HDR = 'hreg.h';
 my @modules = qw(hr_pl hr_hrimpl hr_implattr hreg);
 my $modstring = join(".o ", @modules) . ".o";
 
-my $GENERATED_FILES = "*.o Registry.* INLINE.h";
+my $GENERATED_FILES = "*.o Store.* INLINE.h";
 
 WriteMakefile(
-    NAME                => 'Hash::Registry',
+    NAME                => 'Ref::Store',
     AUTHOR              => q{M. Nunberg, <mnunberg@haskalah.org>},
-    VERSION_FROM        => 'lib/Hash/Registry.pm',
-    ABSTRACT_FROM       => 'lib/Hash/Registry.pm',
+    VERSION_FROM        => 'lib/Ref/Store.pm',
+    ABSTRACT_FROM       => 'lib/Ref/Store.pm',
     CONFIGURE_REQUIRES  => { 'InlineX::C2XS' => 0 },
     ($ExtUtils::MakeMaker::VERSION >= 6.3002
       ? ('LICENSE'=> 'perl')
@@ -26,9 +26,9 @@ WriteMakefile(
         
     },
 #    LIBS                => ['-lprofiler'],
-    OBJECT             => join(".o ", @modules) . ".o Registry.o",
+    OBJECT             => join(".o ", @modules) . ".o Store.o",
     dist                => { COMPRESS => 'gzip -9f', SUFFIX => 'gz', },
-    clean               => { FILES => 'Hash-Registry-* '. $GENERATED_FILES },
+    clean               => { FILES => 'Ref-Store-* '. $GENERATED_FILES },
 );
 
 
@@ -36,8 +36,8 @@ WriteMakefile(
 sub MY::postamble {
     my $self = shift;
     my $perl = $self->{PERLRUN} ? '$(PERLRUN)' : '$(PERL)';
-    my $package_name = 'Hash::Registry::XS::cfunc';
-    my $module_name = 'Hash::Registry';
+    my $package_name = 'Ref::Store::XS::cfunc';
+    my $module_name = 'Ref::Store';
     #c2xs($module_name, $package_name, ".", { SRC_LOCATION => $HDR, AUTOWRAP => 1});
     return "$XSFILE: $HDR $modstring\n\t$perl genxs.pl $HDR $module_name $package_name"
 }

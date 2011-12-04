@@ -1,10 +1,10 @@
-package Hash::Registry::XS::cfunc;
+package Ref::Store::XS::cfunc;
 use strict;
 use warnings;
 use XSLoader;
 our $VERSION = '0.01';
 
-XSLoader::load 'Hash::Registry', $VERSION;
+XSLoader::load 'Ref::Store', $VERSION;
 
 use base qw(Exporter);
 

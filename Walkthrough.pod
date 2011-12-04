@@ -1,7 +1,7 @@
 =head1 NAME
 
-Hash::Registry::Walkthrough - Walkthrough on how to rewrite a module
-using Hash::Registry
+Ref::Store::Walkthrough - Walkthrough on how to rewrite a module
+using Ref::Store
 
 This document is to supplement the synopsis
 in the main module docuemntation.
@@ -73,7 +73,7 @@ Which will clean up everything associated with $request.
 At this point, poco-http has submitted a request to its connection manager
 (L<POE::Component::Client::KeepAlive>), and is now awaiting a response. Here is
 the code which handles it, with ommisions not pertinent to the description of the
-Hash::Registry module.
+Ref::Store module.
 
 	sub _poco_weeble_connect_done {
 	  my ($heap, $response) = @_[HEAP, ARG0];

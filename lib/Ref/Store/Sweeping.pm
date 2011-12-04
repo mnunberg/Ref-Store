@@ -1,10 +1,10 @@
-package Hash::Registry::Sweeping::Key;
+package Ref::Store::Sweeping::Key;
 use strict;
 use warnings;
-use Hash::Registry::Common;
-use Hash::Registry::Key;
+use Ref::Store::Common;
+use Ref::Store::Key;
 use Scalar::Util qw(weaken);
-use base qw(Hash::Registry::Key);
+use base qw(Ref::Store::Key);
 use Log::Fu;
 
 use constant {
@@ -52,12 +52,12 @@ sub is_valid {
 #    $self->[HR_KFLD_TABLEREF]->del_key($self);
 #}
 
-package Hash::Registry::Sweeping::Attribute;
+package Ref::Store::Sweeping::Attribute;
 use strict;
 use warnings;
-use Hash::Registry::Common;
+use Ref::Store::Common;
 use Scalar::Util qw(weaken);
-use base qw(Hash::Registry::Sweeping::Key);
+use base qw(Ref::Store::Sweeping::Key);
 
 use constant {
     HR_KFLD_LOOKUP => HR_KFLD_AVAILABLE()+1
@@ -117,20 +117,20 @@ sub is_valid {
 #}
 
 
-package Hash::Registry::Sweeping;
+package Ref::Store::Sweeping;
 use strict;
 use warnings;
-use Hash::Registry;
-use base qw(Hash::Registry);
-use Hash::Registry::Common;
+use Ref::Store;
+use base qw(Ref::Store);
+use Ref::Store::Common;
 use Log::Fu;
 use Carp qw(cluck);
-#An implementation of Hash::Registry which does not
+#An implementation of Ref::Store which does not
 #use magic, but rather sweeps
 
 our $AccessCount = 0;
 our $SweepInterval = 10000;
-use constant HR_KFLD_VADDR => Hash::Registry::Sweeping::Key::HR_KFLD_VADDR;
+use constant HR_KFLD_VADDR => Ref::Store::Sweeping::Key::HR_KFLD_VADDR;
 
 sub del_key {
     my ($self,$key) = @_;
@@ -168,12 +168,12 @@ sub del_attr {
 
 sub new_key {
     my ($self,$ukey) = @_;
-    Hash::Registry::Sweeping::Key->new($ukey, $self);
+    Ref::Store::Sweeping::Key->new($ukey, $self);
 }
 
 sub new_attr {
     my ($self,$astr,$attr) = @_;
-    Hash::Registry::Sweeping::Attribute->new($astr,$attr,$self);
+    Ref::Store::Sweeping::Attribute->new($astr,$attr,$self);
 }
 
 #NOPify all backdelete operations
@@ -199,7 +199,7 @@ sub new_attr {
     
     foreach my $fn_name (@wrapped) {
         #log_warn($fn_name);
-        my $real_sub = \&{"Hash::Registry" . "::$fn_name"};
+        my $real_sub = \&{"Ref::Store" . "::$fn_name"};
         #log_info($real_sub);
         next unless $real_sub;
         *{$fn_name} = sub {
@@ -300,7 +300,7 @@ __END__
 
 =head1 NAME
 
-Hash::Registry::Sweeping
+Ref::Store::Sweeping
 
 A sweeping implementation of the H::R api.
 

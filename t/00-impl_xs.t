@@ -6,6 +6,6 @@ BEGIN {
 	require (__DIR__ . "/common.pm");
 }
 
-use Hash::Registry::XS;
-$HRTests::Impl = 'Hash::Registry::XS';
+use Ref::Store::XS;
+$HRTests::Impl = 'Ref::Store::XS';
 HRTests::test_all();

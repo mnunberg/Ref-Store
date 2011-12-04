@@ -48,7 +48,7 @@ enum {
 };
 #define STORE_OPT_STRONG_ATTR (1 << 0)
 
-#define PKG_BASE "Hash::Registry::XS"
+#define PKG_BASE "Ref::Store::XS"
 
 #define PKG_KEY_SCALAR  PKG_BASE "::Key"
 #define PKG_KEY_ENCAP   PKG_BASE "::Key::Encapsulating"

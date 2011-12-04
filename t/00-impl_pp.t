@@ -7,5 +7,5 @@ BEGIN {
 }
 
 
-$HRTests::Impl = 'Hash::Registry::PP';
+$HRTests::Impl = 'Ref::Store::PP';
 HRTests::test_all();

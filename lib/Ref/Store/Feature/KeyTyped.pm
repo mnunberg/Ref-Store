@@ -1,4 +1,4 @@
-package Hash::Registry::Feature::KeyTyped;
+package Ref::Store::Feature::KeyTyped;
 use strict;
 use warnings;
 our $AUTOLOAD;

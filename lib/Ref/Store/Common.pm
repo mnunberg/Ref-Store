@@ -1,4 +1,4 @@
-package Hash::Registry::Common;
+package Ref::Store::Common;
 use strict;
 use warnings;
 our @EXPORT;

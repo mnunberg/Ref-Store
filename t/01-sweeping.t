@@ -2,13 +2,13 @@
 use strict;
 use warnings;
 use blib;
-use Hash::Registry::Sweeping;
+use Ref::Store::Sweeping;
 use Test::More;
 use Log::Fu { level => "debug" };
-my $Impl = 'Hash::Registry::Sweeping';
+my $Impl = 'Ref::Store::Sweeping';
 use Dir::Self;
 use Data::Dumper;
-$Hash::Registry::Sweeping::SweepInterval = 1;
+$Ref::Store::Sweeping::SweepInterval = 1;
 
 BEGIN {
     require(__DIR__ . '/common.pm');

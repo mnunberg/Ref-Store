@@ -1,8 +1,8 @@
-package Hash::Registry::XS::Key;
+package Ref::Store::XS::Key;
 use strict;
 use warnings;
-use Hash::Registry::Common;
-use Hash::Registry::XS::cfunc;
+use Ref::Store::Common;
+use Ref::Store::XS::cfunc;
 
 *new = \&HRXSK_new;
 *kstring = \&HRXSK_kstring;
@@ -12,10 +12,10 @@ sub link_value { }
 sub ithread_predup {}
 *ithread_postdup = \&HRXSK_ithread_postdup;
 
-package Hash::Registry::XS::Key::Encapsulating;
+package Ref::Store::XS::Key::Encapsulating;
 use strict;
 use warnings;
-use Hash::Registry::XS::cfunc;
+use Ref::Store::XS::cfunc;
 
 sub unlink_value { }
 
@@ -34,23 +34,23 @@ sub dump {
 
 
 
-package Hash::Registry::XS::Attribute;
+package Ref::Store::XS::Attribute;
 use strict;
 use warnings;
-use Hash::Registry::XS::cfunc;
+use Ref::Store::XS::cfunc;
 
 *unlink_value   = \&HRXSATTR_unlink_value;
 *get_hash       = \&HRXSATTR_get_hash;
 *kstring        = \&HRXSATTR_kstring;
 
-@Hash::Registry::XS::Attribute::Encapsulating::ISA
-    = qw(Hash::Registry::XS::Attribute);
+@Ref::Store::XS::Attribute::Encapsulating::ISA
+    = qw(Ref::Store::XS::Attribute);
 
-package Hash::Registry::XS;
+package Ref::Store::XS;
 use strict;
 use warnings;
-use base qw(Hash::Registry);
-use Hash::Registry::XS::cfunc;
+use base qw(Ref::Store);
+use Ref::Store::XS::cfunc;
 use Log::Fu;
 
 #These two lines completely override the perl store/fetch code and utilize
@@ -69,10 +69,10 @@ use Log::Fu;
 sub new_key {
     my ($self,$scalar) = @_;
     if(!ref $scalar) {
-        return HRXSK_new('Hash::Registry::XS::Key',
+        return HRXSK_new('Ref::Store::XS::Key',
                      $scalar, $self->forward, $self->scalar_lookup);
     } else {
-        return HRXSK_encap_new('Hash::Registry::XS::Key::Encapsulating',
+        return HRXSK_encap_new('Ref::Store::XS::Key::Encapsulating',
                                $scalar, $self, $self->forward,
                                $self->scalar_lookup);
     }
@@ -100,7 +100,7 @@ __END__
 
 =head1 NAME
 
-Hash::Registry::XS - XS/C implementation of the H::R API
+Ref::Store::XS - XS/C implementation of the H::R API
 
 =head2 DESCRIPTION
 

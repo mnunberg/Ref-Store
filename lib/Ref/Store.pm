@@ -1,12 +1,12 @@
-package Hash::Registry;
+package Ref::Store;
 use strict;
 use warnings;
 
 use Scalar::Util qw(weaken);
 
-use Hash::Registry::Common;
-use Hash::Registry::Attribute;
-use Hash::Registry::Dumper;
+use Ref::Store::Common;
+use Ref::Store::Attribute;
+use Ref::Store::Dumper;
 
 
 our $VERSION = '0.01';
@@ -27,7 +27,7 @@ use Class::XSAccessor {
 };
 
 use Data::Dumper;
-use base qw(Hash::Registry::Feature::KeyTyped);
+use base qw(Ref::Store::Feature::KeyTyped);
 
 my %Tables; #Global hash of tables
 
@@ -196,9 +196,9 @@ sub is_empty {
 
 sub dump {
 	my $self = shift;
-	my $dcls = "Hash::Registry::Dumper";
+	my $dcls = "Ref::Store::Dumper";
 	my $hrd = $dcls->new();
-	#my $hrd = Hash::Registry::Dumper->new();
+	#my $hrd = Ref::Store::Dumper->new();
 	#log_err($hrd);
 	$hrd->dump($self);
 	$hrd->flush();
@@ -324,8 +324,8 @@ sub purgeby_sk {
 ################################################################################
 sub new_attr {
 	my ($self,$astr,$attr) = @_;
-	my $cls = ref $attr ? 'Hash::Registry::Attribute::Encapsulating' :
-		'Hash::Registry::Attribute';
+	my $cls = ref $attr ? 'Ref::Store::Attribute::Encapsulating' :
+		'Ref::Store::Attribute';
 	$cls->new($astr,$attr,$self);
 }
 
@@ -580,13 +580,13 @@ __END__
 
 =head1 NAME
 
-Hash::Registry - Store objects, index by object, tag by objects - all without
+Ref::Store - Store objects, index by object, tag by objects - all without
 leaking.
 
 
 =head1 SYNOPSIS
 
-	my $table = Hash::Registry->new();
+	my $table = Ref::Store->new();
 	
 Store a value under a simple string key, maintain the value as a weak reference.
 The string key will be deleted when the value is destroyed:
@@ -654,11 +654,11 @@ Get rid of C<foo_file> entries
 	undef $fh;
 	undef $fh2;
 
-For a more detailed walkthrough, see L<Hash::Registry::Walkthrough>
+For a more detailed walkthrough, see L<Ref::Store::Walkthrough>
 	
 =head1 DESCRIPTION
 
-Hash::Registry provides an efficient and worry-free way to index objects by
+Ref::Store provides an efficient and worry-free way to index objects by
 arbitrary data - possibly other objects, simple scalars, or whatever.
 
 It relies on magic and such to ensure that objects you put in the lookup table
@@ -899,7 +899,7 @@ For instance:
 	use Library1;
 	use Library1;
 	
-	my $hash = Hash::Registry->new();
+	my $hash = Ref::Store->new();
 	$hash->register_kt('l1_key');
 	$hash->register_kt('l2_key');
 	
@@ -1020,7 +1020,7 @@ can either be true, false, or unset. so C<0, ATTR_FREE> is valid as well.
 
 =item new(%options)
 
-Creates a new Hash::Registry object. It takes a hash of options:
+Creates a new Ref::Store object. It takes a hash of options:
 
 =over
 
@@ -1033,9 +1033,9 @@ as its argument
 
 =back
 
-Hash::Registry will try and select the best implementation (C<Hash::Registry::XS>
-and C<Hash::Registry::PP>, in that order). You can override this by seting
-C<$Hash::Registry::SelectedImpl> to a package of your choosing (which must be
+Ref::Store will try and select the best implementation (C<Ref::Store::XS>
+and C<Ref::Store::PP>, in that order). You can override this by seting
+C<$Ref::Store::SelectedImpl> to a package of your choosing (which must be
 loaded).
 
 =back
@@ -1091,7 +1091,7 @@ You may use and distribute this program under the same terms as perl itself
 
 =item L<Hash::Util::FieldHash>
 
-Hash::Registry implements a superset of Hash::Util::FieldHash, but the latter is
+Ref::Store implements a superset of Hash::Util::FieldHash, but the latter is
 most likely quicker. However, it will only work with perls newer than 5.10
 
 =item L<Tie::RefHash::Weak>

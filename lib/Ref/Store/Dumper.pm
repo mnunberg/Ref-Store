@@ -1,4 +1,4 @@
-package Hash::Registry::Dumper;
+package Ref::Store::Dumper;
 use strict;
 use warnings;
 use Scalar::Util qw(isweak looks_like_number);

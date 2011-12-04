@@ -1,4 +1,4 @@
-package Hash::Registry::Attribute::TH;
+package Ref::Store::Attribute::TH;
 use strict;
 use warnings;
 use Scalar::Util qw(weaken);
@@ -34,11 +34,11 @@ sub CLEAR {
     delete $hobj->[TH_ATTR];
 }
 
-package Hash::Registry::Attribute;
+package Ref::Store::Attribute;
 use strict;
 use warnings;
 use Scalar::Util qw(weaken isweak);
-use Hash::Registry::Common;
+use Ref::Store::Common;
 use Data::Dumper;
 use Log::Fu;
 
@@ -122,12 +122,12 @@ sub DESTROY {
     delete $table->attr_lookup->{ $self->[HR_KFLD_STRSCALAR] };
 }
 
-package Hash::Registry::Attribute::Encapsulating;
+package Ref::Store::Attribute::Encapsulating;
 use strict;
 use warnings;
-use base qw(Hash::Registry::Attribute);
+use base qw(Ref::Store::Attribute);
 use Scalar::Util qw(weaken);
-use Hash::Registry::Common;
+use Ref::Store::Common;
 use Log::Fu;
 
 sub new {

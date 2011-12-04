@@ -1,10 +1,10 @@
 =head1 NAME
 
-Hash::Registry - Implementation details
+Ref::Store - Implementation details
 
 =head1 INTRODUCTION
 
-Hash::Registry (The name might change) aims to implement a dynamically garbage
+Ref::Store (The name might change) aims to implement a dynamically garbage
 collected object lookup table. Lookup objects, and index by objects.
 
 =head1 IMPLEMENTATION

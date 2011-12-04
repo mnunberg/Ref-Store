@@ -1,8 +1,8 @@
-package Hash::Registry::Key;
+package Ref::Store::Key;
 use strict;
 use warnings;
 use Scalar::Util qw(weaken);
-use Hash::Registry::Common;
+use Ref::Store::Common;
 
 #This is an attribute,
 
@@ -26,11 +26,11 @@ sub link_value {
     #Nothing here, either
 }
 
-package Hash::Registry::Key::Encapsulating;
+package Ref::Store::Key::Encapsulating;
 use strict;
 use warnings;
 use Scalar::Util qw(weaken);
-use Hash::Registry::Common;
-use base qw(Hash::Registry::Key);
+use Ref::Store::Common;
+use base qw(Ref::Store::Key);
 
 1;
