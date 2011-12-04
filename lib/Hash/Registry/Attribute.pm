@@ -77,15 +77,6 @@ sub unlink_value {
     );
 }
 
-sub exchange_value {
-    my ($self,$old,$new);
-    $self->[HR_KFLD_LOOKUP]->[0]->{$new+0} = $new;
-    delete $self->[HR_KFLD_LOOKUP]->[0]->{$old+0};
-    $self->[HR_KFLD_TABLEREF]->dref_del_ptr(
-        $old, $self->[HR_KFLD_LOOKUP]->[0]
-    )
-}
-
 sub weaken_encapsulated {
 }
 

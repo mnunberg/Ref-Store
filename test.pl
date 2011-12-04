@@ -223,13 +223,12 @@ foreach (1..$Cycles) {
 #Dump memory usage information:
 log_info("Dumping memory usage statistics");
 my $mpriv = 0;
-printf("%-40s %6s\t %6s\n", "State", "RSS", "DIFF");
+printf STDERR ("%-40s %6s\t %6s\n", "State", "RSS", "DIFF");
 foreach my $st (@{$Mu->state()}) {
 	my ($msg,$rss) = @{$st}[1,3];
 	$rss /= 1024;
 	my $diff = $rss - $mpriv;
-	printf("%-40s %6dMB\t %6d\n",
-		   $msg, $rss, $diff);
+	printf STDERR ("%-40s %6dMB\t %6d\n", $msg, $rss, $diff);
 	$mpriv = $rss;
 }
 

@@ -4,16 +4,24 @@
 
 static inline MAGIC* get_our_magic(SV* objref, int create);
 static inline void free_our_magic(SV* objref);
-static int freehook(pTHX_ SV* target, MAGIC *mg);
 
-static MGVTBL vtbl = { .svt_free = &freehook };
+static int hr_freehook(pTHX_ SV* target, MAGIC *mg);
+static int hr_duphook(pTHX_ MAGIC *mg, CLONE_PARAMS *param);
+
+static MGVTBL vtbl = {
+	.svt_dup = &hr_duphook,
+	.svt_free = &hr_freehook
+};
 
 #define OURMAGIC_infree(mg) (mg)->mg_private
 
 
 static int
-freehook(pTHX_ SV* object, MAGIC *mg)
+hr_freehook(pTHX_ SV* object, MAGIC *mg)
 {
+	if(PL_dirty) {
+		return;
+	}
 	HR_DEBUG("FREEHOOK: mg=%p, obj=%p", mg, object);
 	HR_DEBUG("Object refcount: %d", SvREFCNT(object));
 	
@@ -22,12 +30,19 @@ freehook(pTHX_ SV* object, MAGIC *mg)
     HR_trigger_and_free_actions(_mg_action_list(mg), object);
 }
 
-
+/*This is called for new threads, we initialize a new HR_Action list,
+ because old lists would presumably reference variables of the parent thread*/
+static int
+hr_duphook(pTHX_ MAGIC *mg, CLONE_PARAMS *param)
+{
+	HR_DEBUG("Initializing new empty action list");
+	Newxz(mg->mg_ptr, 1, HR_Action);
+}
 
 static inline MAGIC*
 get_our_magic(SV* objref, int create)
 {
-	MAGIC *mg;    
+	MAGIC *mg;
     HR_Action *action_list;
     SV *target;
     
@@ -73,6 +88,8 @@ get_our_magic(SV* objref, int create)
     Newxz(action_list, 1, HR_Action);
 	mg = sv_magicext(target, target, PERL_MAGIC_ext, &vtbl,
 					 (const char*)action_list, 0);
+	
+	mg->mg_flags |= MGf_DUP;
 	
     OURMAGIC_infree(mg) = 0;
 	

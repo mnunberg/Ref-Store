@@ -1,6 +1,7 @@
 package _ObjBase;
 use strict;
 use warnings;
+my $can_use_threads = eval 'use threads; 1';
 
 sub new {
     my ($cls,%opts) = @_;
@@ -128,8 +129,8 @@ sub test_scalar_attr {
     $hash->dissoc_a(42, $t, $v);
     ok(!$hash->has_value($v), "Value automatically deleted");
     
-    use Data::Dumper;
-    print Dumper($hash);
+    #use Data::Dumper;
+    #print Dumper($hash);
     
     ok(!$hash->has_attr(42, $t), "Attribute automatically deleted");
     my $v2 = ValueObject->new();
@@ -139,7 +140,7 @@ sub test_scalar_attr {
     $hash->unlink_a(42, $t);
     ok(!($hash->has_attr(42, $t) || $hash->has_value($v) || $hash->has_value($v2)),
        "Totally deleted!");
-    print Dumper($hash);
+    #print Dumper($hash);
 }
 
 sub test_object_attr {
@@ -165,7 +166,7 @@ sub test_object_attr {
         $hash->store_a($tmpattr, $t, $v);
     }
     ok(!$hash->has_value($v), "Attribute object GC");
-    print Dumper($hash);
+    #print Dumper($hash);
     
     #Test value GC
     $attr = KeyObject->new();
@@ -211,7 +212,7 @@ sub test_chained_basic {
     #print $hash->dump();
     undef $nested_obj;
     ok($hash->is_empty(), "Nested deletion OK");
-    $hash->dump();
+    #$hash->dump();
     #undef $second_obj;
     #undef $third_obj;
     #print Dumper($hash);
@@ -226,6 +227,67 @@ sub test_oexcl {
         $h->store("foo", $v2);
     };
     ok($@, "Error for duplicate insertion ($@)");
+}
+
+sub test_threads {
+    if(!$can_use_threads) {
+        diag "Not testing threads. Couldn't load threads.pm";
+        return;
+    }
+    diag "Testing threads (String keys)";
+    my $table = $Impl->new();
+    my $v = ValueObject->new();
+    my $k = "some_key";
+    $table->store_sk($k, $v);
+    my $k2 = "other_key";
+    $table->store_sk($k2, $v);
+    #$table->dump();
+    
+    my $fn = sub {
+        #$table->dump();
+        my $res = $table->fetch_sk($k) == $v && $table->fetch_sk($k2) == $v;
+        return $res;
+    };
+    my $thr = threads->create($fn); #line displaying message
+    ok($fn->(), "Same thing works in the parent!");
+    ok($thr->join(), "Thread duplication");
+    #undef $thr;
+    
+    ############################################################################
+    diag "Testing threads (object keys)";
+    
+    my $ko = KeyObject->new();
+    $table->store_sk($ko, $v);
+    
+    $fn = sub {
+        my $ret = $table->fetch_sk($ko) == $v;
+        return $ret;
+    };
+    
+    $thr = threads->create($fn);
+    ok($fn->(), "Object keys working");
+    ok($thr->join(),"Thread duplication for encapsulated object keys");
+    #undef $thr;
+    
+    diag "Testing thread duplication with dual (key and/or value) objects";
+    #undef $table;
+    #$table = $Impl->new();
+    my $k_first = KeyObject->new();
+    my $v_first = ValueObject->new();
+    my $v_second = ValueObject->new();
+    
+    $table->store_sk($k_first, $v_first);
+    $table->store_sk($v_first, $v_second);
+    
+    $fn = sub {
+        $table->fetch_sk($k_first) == $v_first &&
+            $table->fetch_sk($v_first) == $v_second
+    };
+    
+    $thr = threads->create($fn);
+    ok($fn->(), "Ok in parent");
+    ok($thr->join(), "Ok in thread!");
+    diag("Returning..");
 }
 
 sub test_all {

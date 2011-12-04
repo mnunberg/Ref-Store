@@ -1,5 +1,6 @@
 #include "hreg.h"
 #include "hrpriv.h"
+#include "hr_duputil.h"
 
 #include <string.h>
 
@@ -19,19 +20,27 @@ typedef struct {
     void *obj_paddr;
 } hrk_encap;
 
-
 static inline HV*
 get_v_hashref(hrk_encap *ke, SV* value);
 
 #ifdef HR_MAKE_PARENT_RV
-#define ketbl_from_ke(ke) (HV*)(SvROK(ke->table) ? NULL : SvRV(ke->table))
+#error HR_MAKE_PARENT_RV is no longer supported
 #else
 #define ketbl_from_ke(ke) (HV*)(ke->table);
 #endif
 
+
 #define keptr_from_sv(svp) \
     ((hrk_encap*)(SvPVX(svp)))
 
+#define ksimple_from_sv(svp) \
+    ((hrk_simple*)(SvPVX(svp)))
+
+#define ksimple_strkey(ksp) \
+    ((char*)(((char*)ksp)+1))
+
+/*We find our information about ourselves here, and place it inside our
+ private pointer table*/
 
 static void k_encap_cleanup(SV *ksv, SV *_)
 {
@@ -44,15 +53,20 @@ static void k_encap_cleanup(SV *ksv, SV *_)
     }
     
     SV *scalar_lookup, *forward, *reverse;
+    
+    SvREFCNT(table)++;
     get_hashes(table,
                HR_HKEY_LOOKUP_REVERSE, &reverse,
                HR_HKEY_LOOKUP_FORWARD, &forward,
                HR_HKEY_LOOKUP_SCALAR, &scalar_lookup,
                HR_HKEY_LOOKUP_NULL
     );
+    SvREFCNT(table)--;
+    
     
     if(!(scalar_lookup && forward && reverse)) {
-        die("Uhh...");
+        die("Uhh...: (S=%p, F=%p, R=%p, REFCOUNT=%d", scalar_lookup, forward, reverse,
+            SvREFCNT(table));
     }
     
     if( (!ke->obj_ptr) || (!SvROK(ke->obj_ptr))) {
@@ -132,9 +146,6 @@ void HRXSK_encap_link_value(SV *self, SV *value)
     };
     HR_add_actions_real(ke->obj_ptr, vdel_actions);
     
-    HR_DEBUG("Reference count of temp RV=%p (%d)", hashref_ptr, SvREFCNT(hashref_ptr));
-    HR_DEBUG("Reference count to actual hash=%d", SvREFCNT(v_hashref));
-    HR_DEBUG("REFCNT_dec(hashref_ptr)");
     SvREFCNT_dec(hashref_ptr);
     HR_DEBUG("Hashref_ptr refcount=%d, hash refcount=%d",
              SvREFCNT(hashref_ptr), SvREFCNT(v_hashref));
@@ -289,16 +300,6 @@ char * HRXSK_kstring(SV *obj)
     HR_DEBUG("Requested key=%s", ret);
     return ret;
 }
-
-
-/*API*/
-
-/*All references to other non-perl functions work in the existing PP implementation
- when they are run via their XS wrappers run via C2XS.
- 
- When applicable, C statements are prefixed with commented perl equivalents
-*/
-
 
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
@@ -483,3 +484,88 @@ SV *HRA_fetch_sk(SV *self, SV *key)
     return ret;
 }
 
+////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
+/// iThread Duplication Handlers                                             ///
+////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
+void HRA_ithread_store_lookup_info(SV *self, HV *ptr_map)
+{
+    hr_dup_store_old_lookups(ptr_map, (HV*)SvRV(self));
+}
+
+void HRXSK_encap_ithread_predup(SV *self, SV *table, HV *ptr_map, SV *value)
+{
+    hrk_encap *ke = keptr_from_sv(SvRV(self));   
+    HR_Dup_Kinfo *ki = hr_dup_store_kinfo(ptr_map, HR_DUPKEY_KENCAP, ke->obj_paddr, 0);
+    
+    if(SvWEAKREF(ke->obj_ptr)) {
+        ki->flags = HRK_DUP_WEAK_ENCAP;
+    } else {
+        ki->flags = 0;
+    }
+    
+    HV *vhash = get_v_hashref(ke, value);
+    ki->vhash = vhash;
+    
+    hr_dup_store_rv(ptr_map, ke->obj_ptr);
+}
+
+void HRXSK_encap_ithread_postdup(SV *newself, SV *newtable, HV *ptr_map, UV old_table)
+{
+    hrk_encap *ke = keptr_from_sv(SvRV(newself));
+    
+    HR_Dup_OldLookups *old_lookups = hr_dup_get_old_lookups(ptr_map, ke->table);
+    HR_Dup_Kinfo *ki = hr_dup_get_kinfo(ptr_map, HR_DUPKEY_KENCAP, ke->obj_paddr);
+    
+    HR_DEBUG("Old vhash was %p, old obj_paddr was %p", ki->vhash, ke->obj_paddr);
+    
+    SV *new_encap = hr_dup_newsv_for_oldsv(ptr_map, ke->obj_paddr, 0);
+    SV *new_vhash = hr_dup_newsv_for_oldsv(ptr_map, ki->vhash, 0);
+    
+    SV *new_slookup;
+    get_hashes(REF2HASH(newtable),
+               HR_HKEY_LOOKUP_SCALAR, &new_slookup,
+               HR_HKEY_LOOKUP_NULL);
+        
+    HR_Action key_actions[] = {
+        HR_DREF_FLDS_arg_for_cfunc(SvRV(newself), &k_encap_cleanup),
+        HR_ACTION_LIST_TERMINATOR
+    };
+    
+    HR_Action encap_actions[] = {
+        HR_DREF_FLDS_ptr_from_hv(SvRV(new_encap), new_slookup),
+        HR_DREF_FLDS_ptr_from_hv(SvRV(new_encap), new_vhash),
+        HR_ACTION_LIST_TERMINATOR
+    };
+    
+    HR_add_actions_real(newself, key_actions);
+    HR_add_actions_real(new_encap, encap_actions);
+    
+    ke->obj_paddr = SvRV(new_encap);
+    ke->obj_ptr = newSVsv(new_encap);
+    if(ki->flags & HRK_DUP_WEAK_ENCAP) {
+        sv_rvweaken(ke->obj_ptr);
+    }
+    ke->table = SvRV(newtable);
+    HR_DEBUG("Reassigned %p", SvRV(newtable));
+}
+
+void HRXSK_ithread_postdup(SV *newself, SV *newtable, HV *ptr_map, UV old_table)
+{
+    hrk_simple *ksp = ksimple_from_sv(SvRV(newself));
+    char *key = ksimple_strkey(ksp);
+    
+    SV *slookup, *flookup;
+    get_hashes(REF2HASH(newtable),
+               HR_HKEY_LOOKUP_SCALAR, &slookup,
+               HR_HKEY_LOOKUP_FORWARD, &flookup,
+               HR_HKEY_LOOKUP_NULL);
+    
+    HR_Action key_actions[] = {
+        HR_DREF_FLDS_Estr_from_hv(key, slookup),
+        HR_DREF_FLDS_Estr_from_hv(key, flookup),
+        HR_ACTION_LIST_TERMINATOR
+    };
+    HR_add_actions_real(newself, key_actions);
+}

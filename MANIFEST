@@ -20,6 +20,8 @@ t/00-impl_pp.t
 hreg.c
 hrpriv.h
 hr_hrimpl.c
+hr_implattr.c
+hr_duputil.h
 hr_pl.c
 hreg.h
 genxs.pl

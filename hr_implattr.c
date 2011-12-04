@@ -4,6 +4,8 @@
 
 #include "hreg.h"
 #include "hrpriv.h"
+#include "hr_duputil.h"
+
 #include <string.h>
 #include <stdlib.h>
 
@@ -514,4 +516,106 @@ static void attr_destroy_trigger(SV *self_sv, SV *encap_obj)
     RV_Freetmp(self_ref);
     RV_Freetmp(attrhash_ref);
     HR_DEBUG("Attr destroy done");
+}
+
+void HRXSATTR_ithread_predup(SV *self, SV *table, HV *ptr_map)
+{
+    hrattr_simple *attr = attr_from_sv(SvRV(self));
+    
+    /*Make sure our attribute hash is visible to perl space*/
+    SV *attrhash_ref;
+    RV_Newtmp(attrhash_ref, (SV*)attr->attrhash);
+    hr_dup_store_rv(ptr_map, attrhash_ref);
+    RV_Freetmp(attrhash_ref);
+    
+    char *ktmp;
+    I32 tmplen;
+    SV *vtmp;
+    SV *rlookup;
+    
+    get_hashes(SvRV(table),
+               HR_HKEY_LOOKUP_REVERSE, &rlookup,
+               HR_HKEY_LOOKUP_NULL);
+    
+    hv_iterinit(attr->attrhash);
+    
+    while( (vtmp = hv_iternextsv(attr->attrhash, &ktmp, &tmplen))) {
+        HR_Dup_Vinfo *vi = hr_dup_get_vinfo(ptr_map, SvRV(vtmp), 1);
+        if(!vi->vhash) {
+            SV *vaddr = newSVuv((UV)SvRV(vtmp));
+            SV *vhash = get_vhash_from_rlookup(rlookup, vaddr, 0);
+            vi->vhash = vhash;
+            SvREFCNT_dec(vaddr);
+        }
+    }
+    
+    if(attr->encap) {
+        hrattr_encap *aencap = attr_encap_cast(attr);
+        
+        hr_dup_store_rv(ptr_map, aencap->obj_rv);
+        char *ai = (char*)hr_dup_store_kinfo(
+            ptr_map, HR_DUPKEY_AENCAP, aencap->obj_paddr, 1);
+        
+        if(SvWEAKREF(aencap->obj_rv)) {
+            *ai = HRK_DUP_WEAK_ENCAP;
+        } else {
+            *ai = 0;
+        }
+    }
+}
+
+void HRXSATTR_ithread_postdup(SV *newself, SV *newtable, HV *ptr_map)
+{
+    hrattr_simple *attr = attr_from_sv(SvRV(newself));
+    
+    SV *new_attrhash_ref = hr_dup_newsv_for_oldsv(ptr_map, attr->attrhash, 0);
+    attr->attrhash = SvRV(new_attrhash_ref);
+        
+    /*Now do the equivalent of: my @keys = keys %attrhash; foreach my $key (@keys)*/
+    int n_keys = hv_iterinit(attr->attrhash);
+    
+    if(n_keys) {
+        char **keylist = NULL;
+        char **klist_head = NULL;
+        int tmp_len;
+
+        Newx(keylist, n_keys+1, char*);
+        keylist[n_keys] = NULL;
+        klist_head = keylist;
+        while(hv_iternextsv(attr->attrhash, ++keylist, &tmp_len)); /*No body*/
+        
+        for(keylist = klist_head; *keylist; ++keylist) {
+            SV **stored = hv_delete(attr->attrhash, *keylist, strlen(*keylist), 0);
+            assert(*stored);
+            mk_ptr_string(new_s, SvRV(*stored));
+            hv_store(attr->attrhash, new_s, strlen(new_s), *stored, 0);
+            HR_Action v_actions[] = {
+                HR_DREF_FLDS_ptr_from_hv(SvRV(*stored), new_attrhash_ref),
+                HR_ACTION_LIST_TERMINATOR
+            };
+            HR_add_actions_real(*stored, v_actions);
+        }
+        Safefree(klist_head);
+    }
+    
+    HR_Action attr_actions[] = {
+        HR_DREF_FLDS_arg_for_cfunc(SvRV(newself), &attr_destroy_trigger),
+        HR_ACTION_LIST_TERMINATOR
+    };
+    HR_add_actions_real(newself, attr_actions);
+    
+    if(attr->encap) {
+        hrattr_encap *aencap = attr_encap_cast(attr);
+        SV *new_encap = hr_dup_newsv_for_oldsv(ptr_map, aencap->obj_paddr, 1);
+        char *ainfo = (char*)hr_dup_get_kinfo(
+                    ptr_map, HR_DUPKEY_AENCAP, aencap->obj_paddr);
+        if(*ainfo == HRK_DUP_WEAK_ENCAP) {
+            sv_rvweaken(new_encap);
+        }
+        HR_Action encap_actions[] = {
+            HR_DREF_FLDS_arg_for_cfunc(SvRV(new_encap), (SV*)&encap_attr_destroy_hook),
+            HR_ACTION_LIST_TERMINATOR
+        };
+        HR_add_actions_real(new_encap, encap_actions);
+    }
 }

@@ -18,11 +18,16 @@ our @EXPORT = qw(
     
     HRXSK_new
     HRXSK_kstring
+    HRXSK_ithread_postdup
+    
     HRXSK_encap_new
     HRXSK_encap_kstring
     HRXSK_encap_weaken
     HRXSK_encap_link_value
     HRXSK_encap_getencap
+    HRXSK_encap_ithread_predup
+    HRXSK_encap_ithread_postdup
+    
     
 	HRA_store_sk
 	HRA_fetch_sk
@@ -32,6 +37,7 @@ our @EXPORT = qw(
     HRA_dissoc_a
     HRA_unlink_a
     HRA_attr_get
+    HRA_ithread_store_lookup_info
     
     HRXSATTR_unlink_value
     HRXSATTR_get_hash

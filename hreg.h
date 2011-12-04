@@ -74,7 +74,7 @@ enum {
     HR_FLAG_STR_NO_ALLOC        = 1 << 0, //Do not copy/allocate/free string
     HR_FLAG_HASHREF_WEAKEN      = 1 << 1, //not really used
     HR_FLAG_SV_REFCNT_DEC       = 1 << 2, //Key is an SV whose REFCNT we should decrease
-    HR_FLAG_PTR_NO_STRINGIFY    = 1 << 3, //Do not stringify the pointer
+    HR_FLAG_PTR_NO_STRINGIFY    = 1 << 3, //Do not stringify the pointer    
 };
 
 /*We re-use the STR_NO_ALLOC field for an SV flag, which is obviously a TYPE_PTR*/
@@ -93,7 +93,7 @@ HR_Action {
     void        *key;
     
     //Action type and union
-    unsigned int atype:3;
+    unsigned int atype : 3;
     
     //TODO: Implement the unions
     
@@ -104,7 +104,7 @@ HR_Action {
     //} u_action;
     
     //Key type and union
-    unsigned int ktype:2;
+    unsigned int ktype : 2;
     
     //union {
     //    unsigned int idx;
@@ -114,7 +114,7 @@ HR_Action {
     
     SV          *hashref;
     
-    unsigned int flags;
+    unsigned int flags : 5;
     /*TODO:
      instead of just using a hashref, specify an action type, perhaps deleting
      something from an arrayref or calling a subroutine directly
@@ -183,6 +183,9 @@ void HR_PL_del_action_sv(SV *object, SV *hashref, SV *keysv);
 
 SV*  HRXSK_new(char *package, char *key, SV *forward, SV *scalar_lookup);
 char *HRXSK_kstring(SV* self);
+void HRXSK_ithread_postdup(SV *newself, SV *newtable, HV *ptr_map, UV old_table);
+
+
 
 SV* HRXSK_encap_new(char *package, SV *encapsulated_object,
                     SV *table, SV *forward, SV *scalar_lookup);
@@ -191,11 +194,12 @@ UV HRXSK_encap_kstring(SV *ksv_ref);
 void HRXSK_encap_weaken(SV *ksv_ref);
 void HRXSK_encap_link_value(SV *self, SV *value);
 SV*  HRXSK_encap_getencap(SV *self);
-
 void HRXSATTR_unlink_value(SV *aobj, SV *value);
 SV*  HRXSATTR_get_hash(SV *aobj);
 char* HRXSATTR_kstring(SV *aobj);
 
+void HRXSK_encap_ithread_predup(SV *self, SV *table, HV *ptr_map, SV *value);
+void HRXSK_encap_ithread_postdup(SV *newself, SV *newtable, HV *ptr_map, UV old_table);
 
 /*H::R API*/
 void HRA_store_sk(SV *hr, SV *ukey, SV *value, ...);
@@ -206,5 +210,6 @@ void  HRA_fetch_a(SV *hr, SV *attr, char *t);
 void HRA_dissoc_a(SV *hr, SV *attr, char *t, SV *value);
 void HRA_unlink_a(SV *hr, SV *attr, char *t);
 SV* HRA_attr_get(SV *hr, SV *attr, char *t);
+void HRA_ithread_store_lookup_info(SV *self, HV *ptr_map);
 
 #endif /*HREG_H_*/

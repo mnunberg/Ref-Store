@@ -8,24 +8,31 @@ use Hash::Registry::XS::cfunc;
 *kstring = \&HRXSK_kstring;
 sub weaken_encapsulated { }
 sub unlink_value { }
-sub link_value {}
-
+sub link_value { }
+sub ithread_predup {}
+*ithread_postdup = \&HRXSK_ithread_postdup;
 
 package Hash::Registry::XS::Key::Encapsulating;
 use strict;
 use warnings;
 use Hash::Registry::XS::cfunc;
 
-*new = \&HRXSK_encap_new;
-*weaken_encapsulated = \&HRXSK_encap_weaken;
-*link_value = \&HRXSK_encap_link_value;
-*kstring = \&HRXSK_encap_kstring;
-sub unlink_value { warn "This needs to be implmemented"; }
+sub unlink_value { }
+
+*new                    = \&HRXSK_encap_new;
+*weaken_encapsulated    = \&HRXSK_encap_weaken;
+*link_value             = \&HRXSK_encap_link_value;
+*kstring                = \&HRXSK_encap_kstring;
+
+*ithread_predup         = \&HRXSK_encap_ithread_predup;
+*ithread_postdup        = \&HRXSK_encap_ithread_postdup;
 
 sub dump {
     my ($self,$hrd) = @_;
     $hrd->iprint("ENCAP: %s", $hrd->fmt_ptr($self->HRXSK_encap_getencap));
 }
+
+
 
 package Hash::Registry::XS::Attribute;
 use strict;
@@ -57,6 +64,7 @@ use Log::Fu;
 *dissoc_a           = \&HRA_dissoc_a;
 *unlink_a           = \&HRA_unlink_a;
 *attr_get           = \&HRA_attr_get;
+*ithread_store_lookup_info = \&HRA_ithread_store_lookup_info;
 
 sub new_key {
     my ($self,$scalar) = @_;

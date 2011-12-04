@@ -125,14 +125,11 @@ get_vhash_from_rlookup(SV *rlookup, SV *vaddr, int create)
         HR_DEBUG("Adding DREF for HV=%p", SvRV(rlookup));
         SV *vref = NULL;
         RV_Newtmp(vref, ((SV*)(SvUV(vaddr))) );
-        //SV *vref = newRV_noinc( ((SV*)(SvUV(vaddr))) );
         HR_Action rlookup_delete[] = {
             HR_DREF_FLDS_ptr_from_hv(SvRV(vref), rlookup ),
             HR_ACTION_LIST_TERMINATOR
         };
         HR_add_actions_real(vref, rlookup_delete);
-        //SvROK_off(vref);
-        //SvREFCNT_dec(vref);
         RV_Freetmp(vref);
     }
     

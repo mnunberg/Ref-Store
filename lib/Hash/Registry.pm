@@ -1,11 +1,13 @@
 package Hash::Registry;
 use strict;
 use warnings;
+
 use Scalar::Util qw(weaken);
 
 use Hash::Registry::Common;
 use Hash::Registry::Attribute;
 use Hash::Registry::Dumper;
+
 
 our $VERSION = '0.01';
 use Log::Fu { level => "debug" };
@@ -20,11 +22,14 @@ use Class::XSAccessor {
 		unkeyfunc
 		impl_data
 		keytypes
+		flags
 	)]
 };
 
 use Data::Dumper;
 use base qw(Hash::Registry::Feature::KeyTyped);
+
+my %Tables; #Global hash of tables
 
 ################################################################################
 ################################################################################
@@ -70,6 +75,8 @@ sub new {
 	$options{forward} = {};
 	$options{scalar_lookup} = {};
 	my $self = $cls->_real_new(%options);
+	
+	weaken($Tables{$self+0} = $self);
 	return $self;
 }
 
@@ -429,24 +436,144 @@ sub unlink_a {
 	}
 }
 
+
 *lexists_a = \&has_attr;
-#use Carp qw(cluck);
-#sub DESTROY {
-#	cluck("bye!");
-#}
 
 sub DESTROY {
 	my $self = shift;
+	#log_errf("Bye %d", $self+0);
 	foreach my $aobj (values %{$self->attr_lookup}) {
 		foreach my $v (values %{$aobj->get_hash}) {
 			$self->purge($v);
 		}
 	}
+	
 	foreach my $v (values %{$self->forward}) {
+		next unless defined $v;
 		$self->purge($v);
+	}
+	
+	delete $Tables{$self+0};
+	#log_errf("Destroy: %p done", $self);
+}
+
+################################################################################
+################################################################################
+### Thread Cloning                                                           ###
+################################################################################
+################################################################################
+
+#This maps addresses to (weak) object references
+our %CloneAddrs;
+
+sub ithread_predup {
+	my $self = shift;
+	
+	$self->ithread_store_lookup_info(\%CloneAddrs);
+	
+	#Key lookups
+	foreach my $val (values %{$self->forward}) {
+		weaken($CloneAddrs{$val+0} = $val);
+	}
+	
+	foreach my $kobj (values %{$self->scalar_lookup}) {
+		weaken($CloneAddrs{$kobj+0} = $kobj);
+		
+		my $v = $self->forward->{$kobj->kstring};
+		$kobj->ithread_predup($self, \%CloneAddrs, $v);
+	}
+	
+	foreach my $attr (values %{$self->attr_lookup}) {
+		weaken($CloneAddrs{$attr+0} = $attr);
+		$attr->ithread_predup($self, \%CloneAddrs);
+	}
+	
+	foreach my $vhash (values %{$self->reverse}) {
+		weaken($CloneAddrs{$vhash+0} = $vhash);
+	}
+	log_info("Predup done");
+}
+
+use Carp qw(cluck);
+sub ithread_postdup {
+	my ($self,$old_table) = @_;
+	
+	my @oldkeys = keys %{$self->reverse};
+	foreach my $oldaddr (@oldkeys) {
+		my $vhash = $self->reverse->{$oldaddr};
+		my $vobj = $CloneAddrs{$oldaddr};
+		my $newaddr = $vobj + 0;
+		$self->reverse->{$newaddr} = $vhash;
+		delete $self->reverse->{$oldaddr};
+		$self->dref_add_ptr($vobj, $self->reverse, $newaddr);
+	}
+	
+	@oldkeys = keys %{$self->scalar_lookup};
+	foreach my $kstring (@oldkeys) {
+		my $kobj = $self->scalar_lookup->{$kstring};
+		$kobj->ithread_postdup($self, \%CloneAddrs, $old_table);
+		my $new_kstring = $kobj->kstring;
+		
+		next unless $new_kstring ne $kstring;
+		
+		delete $self->scalar_lookup->{$kstring};
+		my $v = delete $self->forward->{$kstring};
+		
+		$self->scalar_lookup->{$new_kstring} = $kobj;
+		$self->forward->{$new_kstring} = $v;
+	}
+	
+	while ( my($astring,$aobj) = each %{$self->attr_lookup}) {
+		
+		$aobj->ithread_postdup($self, \%CloneAddrs);
+		my $new_astring = $aobj->kstring;
+		
+		next unless $new_astring ne $astring;
+		
+		delete $self->attr_lookup->{$astring};
+		$self->attr_lookup->{$new_astring} = $aobj;
 	}
 }
 
+use Carp qw(confess);
+$SIG{__DIE__}=\&confess;
+sub CLONE_SKIP {
+	my $pkg = shift;
+	return 0 if $pkg ne __PACKAGE__;
+	%CloneAddrs = ();
+	
+	while ( my ($addr,$obj) = each %Tables ) {
+		if(!defined $obj) {
+			log_err("Found undefined reference T=$addr");
+			#die("Found undef table in hash");
+			delete $Tables{$addr};
+			next;
+		}
+		$obj->ithread_predup();
+	}
+	
+	log_info("CLONE_SKIP done");
+	return 0;
+}
+
+sub CLONE {
+	my $pkg = shift;
+	return if $pkg ne __PACKAGE__;
+	log_info("CLONE: Begin");
+	#print Dumper(\%CloneAddrs);
+	
+	my @tkeys = keys %Tables;
+	my @new_tables;
+	foreach my $old_taddr (@tkeys) {
+		my $table = delete $Tables{$old_taddr};
+		#log_info("Calling ithread_postdup on table");
+		$table->ithread_postdup($old_taddr);
+		#log_info("Done");
+		weaken($Tables{$table+0} = $table);
+	}
+	
+	%CloneAddrs = ();
+}
 1;
 
 __END__
