@@ -28,13 +28,18 @@ sub KeyObject::DESTROY { $KeyObject::ObjectCount--; }
 package main;
 use strict;
 use warnings;
+
+
 use Data::Dumper;
 use Getopt::Long;
 use Log::Fu { level=> "debug", target => \*STDOUT };
 use lib "/home/mordy/src/Ref-Store/lib";
-use Benchmark qw(:all);
-use Memory::Usage;
 
+use Ref::Store::Common;
+use Benchmark qw(:all);
+use Module::Stubber 'Memory::Usage' => [],
+	will_use => { state => sub { [] } };
+	
 my $Htype = 'Ref::Store::PP';
 GetOptions('x|xs' => \my $use_xs,
 	'p|pp' => \my $use_pp,

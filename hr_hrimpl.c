@@ -1,4 +1,5 @@
 #include "hreg.h"
+#include "hrdefs.h"
 #include "hrpriv.h"
 #include "hr_duputil.h"
 
@@ -54,14 +55,14 @@ static void k_encap_cleanup(SV *ksv, SV *_)
     
     SV *scalar_lookup, *forward, *reverse;
     
-    SvREFCNT(table)++;
+    //SvREFCNT(table)++;
     get_hashes(table,
                HR_HKEY_LOOKUP_REVERSE, &reverse,
                HR_HKEY_LOOKUP_FORWARD, &forward,
                HR_HKEY_LOOKUP_SCALAR, &scalar_lookup,
                HR_HKEY_LOOKUP_NULL
     );
-    SvREFCNT(table)--;
+    //SvREFCNT(table)--;
     
     
     if(!(scalar_lookup && forward && reverse)) {
@@ -362,14 +363,14 @@ static inline SV* ukey2ikey(
         /*This function will do (among other things) the equivalent of:
             newRV_inc(SvRV(our_key));
         */
-        kobj =  HRXSK_encap_new(PKG_KEY_ENCAP,
+        kobj =  HRXSK_encap_new(HR_PKG_KEY_ENCAP,
                     key, self, flookup, slookup);
         /*PP: if(!$options{StrongKey}) { $o->weaken_encapsulated() }*/
         if( (options & STORE_OPT_STRONG_KEY) == 0) {
             HRXSK_encap_weaken(kobj);
         }
     } else {
-        kobj = HRXSK_new(PKG_KEY_SCALAR,
+        kobj = HRXSK_new(HR_PKG_KEY_SCALAR,
                 SvPV_nolen(our_key), flookup, slookup);
         /*XS Simple key's weaken_encapsulated is nop*/
     }

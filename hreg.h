@@ -24,9 +24,6 @@ static int _hr_enable_debug = -1;
     (SvROK(r1) && SvROK(r2) && \
     SvRV(r1) == SvRV(r2))
 
-#define _xv_deref_complex_ok(ref, target, to) (SvROK(ref) && SvTYPE(target=(to*)SvRV(ref)) == SVt_PV ## to)
-
-#define _sv_deref_mg_ok(ref, target) (SvROK(ref) && SvTYPE(target=SvRV(ref)) == SVt_PVMG)
 
 #define _mg_action_list(mg) (HR_Action*)mg->mg_ptr
 
@@ -34,8 +31,6 @@ static int _hr_enable_debug = -1;
     char vname[128] = { '\0' }; \
     sprintf(vname, "%lu", ptr);
 
-
-//#define HR_MAKE_PARENT_RV
 
 #define HREG_API_INTERNAL
 
@@ -72,9 +67,10 @@ typedef enum {
 
 enum {
     HR_FLAG_STR_NO_ALLOC        = 1 << 0, //Do not copy/allocate/free string
-    HR_FLAG_HASHREF_WEAKEN      = 1 << 1, //not really used
+    HR_FLAG_HASHREF_WEAKEN      = 1 << 1, //Weaken hashref, assumes HASHREF_RV
     HR_FLAG_SV_REFCNT_DEC       = 1 << 2, //Key is an SV whose REFCNT we should decrease
-    HR_FLAG_PTR_NO_STRINGIFY    = 1 << 3, //Do not stringify the pointer    
+    HR_FLAG_PTR_NO_STRINGIFY    = 1 << 3, //Do not stringify the pointer
+    HR_FLAG_HASHREF_RV          = 1 << 4, //hashref is a reference, not a plain SV
 };
 
 /*We re-use the STR_NO_ALLOC field for an SV flag, which is obviously a TYPE_PTR*/
@@ -82,7 +78,7 @@ enum {
 
 #define action_key_is_rv(aptr) ((aptr)->flags & HR_FLAG_SV_REFCNT_DEC)
 #define action_container_is_sv(aptr) ((aptr->atype != HR_ACTION_TYPE_CALL_CFUNC))
-
+#define action_container_is_rv(aptr) ((aptr->flags & (HR_FLAG_HASHREF_RV)))
 typedef struct HR_Action HR_Action;
 typedef void(*HR_ActionCallback)(void*,SV*);
 
@@ -90,35 +86,11 @@ struct
 __attribute__((__packed__))
 HR_Action {
     HR_Action   *next;
-    void        *key;
-    
-    //Action type and union
-    unsigned int atype : 3;
-    
-    //TODO: Implement the unions
-    
-    //union {
-    //    SV *hashref;
-    //    SV *arrayref;
-    //    HR_ActionCallback *cb;
-    //} u_action;
-    
-    //Key type and union
-    unsigned int ktype : 2;
-    
-    //union {
-    //    unsigned int idx;
-    //    void *ptr;
-    //    char *key;
-    //} u_selector;
-    
-    SV          *hashref;
-    
-    unsigned int flags : 5;
-    /*TODO:
-     instead of just using a hashref, specify an action type, perhaps deleting
-     something from an arrayref or calling a subroutine directly
-    */
+    void        *key;       //Key
+    unsigned int atype : 3; //Action type
+    unsigned int ktype : 2; //Key type
+    SV          *hashref;   //Container
+    unsigned int flags : 5; //Flags
 };
 
 #define HR_ACTION_LIST_TERMINATOR \
@@ -179,6 +151,16 @@ void HR_PL_del_action_str(SV *object, SV *hashref, char *str);
 void HR_PL_del_action_container(SV *object, SV *hashref);
 void HR_PL_del_action_sv(SV *object, SV *hashref, SV *keysv);
 
+/*This is mainly for Ref::Destructor, and allows a more versatile, possibly
+ slower, but safer specification of actions. Specifically, the target object
+ will always be a reference (though it can be weakened)
+*/
+
+void HR_PL_add_action_ext_safe(
+    SV *objref, UV key, unsigned int atype, unsigned int ktype, SV *hashref,
+    unsigned int flags);
+
+
 /* H::R implementation */
 
 SV*  HRXSK_new(char *package, char *key, SV *forward, SV *scalar_lookup);
@@ -200,6 +182,9 @@ char* HRXSATTR_kstring(SV *aobj);
 
 void HRXSK_encap_ithread_predup(SV *self, SV *table, HV *ptr_map, SV *value);
 void HRXSK_encap_ithread_postdup(SV *newself, SV *newtable, HV *ptr_map, UV old_table);
+
+void HRXSATTR_ithread_predup(SV *self, SV *table, HV *ptr_map);
+void HRXSATTR_ithread_postdup(SV *newself, SV *newtable, HV *ptr_map);
 
 /*H::R API*/
 void HRA_store_sk(SV *hr, SV *ukey, SV *value, ...);

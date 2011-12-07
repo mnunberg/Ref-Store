@@ -9,7 +9,7 @@ use Ref::Store::Attribute;
 use Ref::Store::Dumper;
 
 
-our $VERSION = '0.01';
+our $VERSION = '0.02_0';
 use Log::Fu { level => "debug" };
 use Class::XSAccessor {
 	constructor => '_real_new',
@@ -440,21 +440,37 @@ sub unlink_a {
 *lexists_a = \&has_attr;
 
 sub DESTROY {
+	
 	my $self = shift;
-	#log_errf("Bye %d", $self+0);
-	foreach my $aobj (values %{$self->attr_lookup}) {
-		foreach my $v (values %{$aobj->get_hash}) {
-			$self->purge($v);
+	my @values;
+	foreach my $attr (values %{$self->attr_lookup}) {
+		foreach my $v (values %{$attr->get_hash}) {
+			next unless defined $v;
+			if($attr->can('unlink_value')) {
+				$attr->unlink_value($v);
+			}
+			push @values, $v;
 		}
 	}
 	
-	foreach my $v (values %{$self->forward}) {
+	foreach my $kobj (values %{$self->scalar_lookup}) {
+		my $v = $self->forward->{$kobj->kstring};
 		next unless defined $v;
-		$self->purge($v);
+		push @values, $v;
+		if($kobj->can("unlink_value")) {
+			$kobj->unlink_value($v);
+		}
+		delete $self->scalar_lookup->{$kobj->kstring};
+		delete $self->forward->{$kobj->kstring};
 	}
 	
+	foreach my $value (@values) {
+		delete $self->reverse->{$value+0};
+		$self->dref_del_ptr($value, $self->reverse, $value + 0);
+	}
+	undef @values;
+	
 	delete $Tables{$self+0};
-	#log_errf("Destroy: %p done", $self);
 }
 
 ################################################################################
@@ -486,6 +502,9 @@ sub ithread_predup {
 	foreach my $attr (values %{$self->attr_lookup}) {
 		weaken($CloneAddrs{$attr+0} = $attr);
 		$attr->ithread_predup($self, \%CloneAddrs);
+		foreach my $v (values %{$attr->get_hash}) {
+			weaken($CloneAddrs{$v+0} = $v);
+		}
 	}
 	
 	foreach my $vhash (values %{$self->reverse}) {
@@ -502,6 +521,10 @@ sub ithread_postdup {
 	foreach my $oldaddr (@oldkeys) {
 		my $vhash = $self->reverse->{$oldaddr};
 		my $vobj = $CloneAddrs{$oldaddr};
+		if(!defined $vobj) {
+			print Dumper(\%CloneAddrs);
+			die("KEY=$oldaddr");
+		}
 		my $newaddr = $vobj + 0;
 		$self->reverse->{$newaddr} = $vhash;
 		delete $self->reverse->{$oldaddr};
@@ -666,18 +689,42 @@ are not maintained there unless you want them to be. In other words, you can sto
 objects in the table, and delete them without having to worry about what other
 possible indices/references may be holding down the object.
 
+If you are looking for something to store B<Data>, then direct your attention to
+L<KiokuDB>, L<Tangram> or L<Pixie> - these modules will store your I<data>.
+
+However, if you are specifically wanting to maintain garbage-collected and reference
+counted perl objects, then this module is for you. continue reading.
+
 =head2 USAGE APPLICATIONS AND BENEFITS
+
+This module caters to the common, but very narrow scope of opaque perl references.
+It cares nothing about what kind of objects you are using as keys or values. It
+will never dereference your object or call any methods on it, thus the only
+requirement for an object is that it be a perl reference.
+
+Using this module, it is possible to create arbitrarily complex, but completely
+leak free dependency and relationship graphs between objects.
+
+Sometimes, expressing object lifetime dependencies in terms of encapsulation is
+not desirable. Circular references can happen, and the hierarchy can become
+increasingly complex and deep - not just logically, but also syntactically.
+
+This becomes even more unwieldy when the same object has various sets of dependants.
+
+A good example would be a socket server proxy, which accepts requests from clients,
+opens a second connection to a third-party server to process the client request,
+forwards the request to the client's intended origin server, and then finally
+relays the response back to the client.
 
 At a more basic level, this module is good for general simple and safe by-object
 indexing and object tagging. It is also a good replacement for L<Hash::Util::FieldHash>
-support for perls which do not support tied hash C<uvar> magic.
+support for perls which do not support tied hash C<uvar> magic; so you can use
+Ref::Store for inside out objects with no limitations, on any perl >= 5.8
 
-Thus, this module can perform inside-out objects 
-
-This module is not designed for the simple one-off script or module. For most
-applications there is no true need to have multiple dynamically associated and
-deleted object entries. The benefits of this module become apparent in design
-and ease of use when larger and more complex, event-oriented systems are in use.
+For most simple applications there is no true need to have multiple dynamically
+associated and deleted object entries. The benefits of this module become
+apparent in design and ease of use when larger and more complex,
+event-oriented systems are in use.
 
 In shorter terms, this module allows you to reliably use a I<Single Source Of Truth>
 for your object lookups. There is no need to synchronize multiple lookup tables
@@ -1099,5 +1146,7 @@ most likely quicker. However, it will only work with perls newer than 5.10
 =item L<Variable::Magic>
 
 Perl API for magic interface, used by the C<PP> backend
+
+=item L<KiokuDB>, L<Tangram>, L<Pixie>
 
 =back

@@ -39,7 +39,6 @@ use Log::Fu;
 use constant {
     HR_KFLD_VHREF => HR_KFLD_AVAILABLE() + 1
 };
-use Internals qw(GetRefCount);
 use Devel::Peek qw(Dump);
 
 sub new {

@@ -24,9 +24,12 @@ sub reset_counter {
 
 
 package HRTests;
+use Ref::Store::Common;
 use Scalar::Util qw(weaken isweak);
 use Test::More;
 use Data::Dumper;
+use Log::Fu;
+use Devel::Peek qw(Dump);
 
 our $Impl;
 
@@ -81,9 +84,6 @@ sub test_multiple_hashes {
     }
     is($results, 2, "Storage in multiple HR objects");
 }
-use Log::Fu;
-use Internals qw(GetRefCount);
-use Devel::Peek qw(Dump);
 
 sub test_object_keys {
     my $hash = $Impl->new();
@@ -287,6 +287,34 @@ sub test_threads {
     $thr = threads->create($fn);
     ok($fn->(), "Ok in parent");
     ok($thr->join(), "Ok in thread!");
+    
+    diag "About to undef table";
+    
+    $table->purge($_) foreach ($k_first,$v_first,$v_second);
+    undef $table;
+    
+    $table = $Impl->new();
+    
+    diag "Will test attributes";
+    $table->register_kt("ATTR");
+    $table->store_a(1, "ATTR", $v);
+    
+    $thr = threads->create(sub{
+        grep $v, $table->fetch_a(1, 'ATTR')
+    });
+    ok($thr->join(), "Got value from attribute store");
+
+    $table->register_kt('ATTROBJ');
+    $table->store_a($v_first, 'ATTROBJ', $v);
+    $table->store_a($v_first, 'ATTROBJ', $v_second);
+
+    $thr = threads->create(sub{
+            grep($v, $table->fetch_a($v_first, 'ATTROBJ')) &&
+            grep($v_second, $table->fetch_a($v_first, 'ATTROBJ'))
+    });
+
+    ok($thr->join(), "Attribute Object");
+
     diag("Returning..");
 }
 

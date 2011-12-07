@@ -9,11 +9,11 @@ enum {
     HRK_DUP_WEAK_VALUE = 1 << 1
 };
 
-#define HR_DUPKEY_OLD_LOOKUPS "__XS:OLD_LOOKUPS__"
+#define HR_DUPKEY_OLD_LOOKUPS "__XS_OLD_LOOKUPS:"
 
-#define HR_DUPKEY_KENCAP "__KENCAP:"
-#define HR_DUPKEY_AENCAP "__AENCAP:"
-#define HR_DUPKEY_VHASH  "__V2VI:"
+#define HR_DUPKEY_KENCAP "__XS_KENCAP:"
+#define HR_DUPKEY_AENCAP "__XS_AENCAP:"
+#define HR_DUPKEY_VHASH  "__XS_V2VI:"
 
 typedef struct {
     void *vhash;
@@ -113,11 +113,18 @@ hr_dup_get_vinfo(HV *ptr_map, void *vaddr, int create)
 {
     mk_vi_key(hkey, vaddr);
     SV **stored = hv_fetch(ptr_map, hkey, strlen(hkey), create);
+    
     if(!create) {
-        assert(stored);
-    } else if(!SvCUR(*stored)) {
-        SvGROW(*stored, sizeof(HR_Dup_Vinfo));
-        ((HR_Dup_Vinfo*)SvPVX(*stored))->vhash = NULL;
+        if(!stored) {
+            return NULL;
+        }
+    } else {
+        assert(stored && *stored);
+        if(SvTYPE(*stored) == NULL) {
+            SvUPGRADE(*stored, SVt_PV);
+            SvGROW( (*stored), sizeof(HR_Dup_Vinfo));
+            ((HR_Dup_Vinfo*)SvPVX( (*stored)) )->vhash = NULL;
+        }
     }
     return (HR_Dup_Vinfo*)SvPVX(*stored);
 }

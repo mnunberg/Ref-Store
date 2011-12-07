@@ -2,15 +2,11 @@
 #define HRPRIV_H_
 
 #include "hreg.h"
+#include "hrdefs.h"
+
 #include <stdarg.h>
 
 #define REF2HASH(ref) ((HV*)(SvRV(ref)))
-
-#define HR_HKEY_RLOOKUP "reverse"
-#define HR_HKEY_FLOOKUP "forward"
-#define HR_HKEY_SLOOKUP "scalar_lookup"
-#define HR_HKEY_KTYPES "keytypes"
-#define HR_HKEY_ALOOKUP "attr_lookup"
 
 #define HR_INLINE static inline
 
@@ -29,15 +25,6 @@ enum {
     VHASH_INIT_FULL = 2,
 };
 
-enum {
-    HR_HKEY_LOOKUP_NULL     = 0,
-    HR_HKEY_LOOKUP_SCALAR   = 1,
-    HR_HKEY_LOOKUP_FORWARD  = 2,
-    HR_HKEY_LOOKUP_REVERSE  = 3,
-    HR_HKEY_LOOKUP_KT       = 4,
-    HR_HKEY_LOOKUP_ATTR     = 5,
-};
-
 typedef char* HSpec[2];
 
 
@@ -48,26 +35,15 @@ enum {
 };
 #define STORE_OPT_STRONG_ATTR (1 << 0)
 
-#define PKG_BASE "Ref::Store::XS"
-
-#define PKG_KEY_SCALAR  PKG_BASE "::Key"
-#define PKG_KEY_ENCAP   PKG_BASE "::Key::Encapsulating"
-#define PKG_ATTR_SCALAR PKG_BASE "::Attribute"
-#define PKG_ATTR_ENCAP  PKG_BASE "::Attribute::Encapsulating"
-
-#define STROPT_STRONG_KEY "StrongKey"
-#define STROPT_STRONG_VALUE "StrongValue"
-#define STROPT_STRONG_ATTR "StrongAttr"
-
 /*This macro will convert string hash options into bitflags for the
  various store functions
 */
 
 #define _chkopt(option_id, iter, optvar) \
-    if(strcmp(STROPT_ ## option_id, SvPV_nolen(ST(iter))) == 0 \
+    if(strcmp(HR_STROPT_ ## option_id, SvPV_nolen(ST(iter))) == 0 \
     && SvTRUE(ST(iter+1))) { \
         optvar |= STORE_OPT_ ## option_id; \
-        HR_DEBUG("Found option %s", STROPT_ ## option_id); \
+        HR_DEBUG("Found option %s", HR_STROPT_ ## option_id); \
         continue; \
     }
 

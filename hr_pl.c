@@ -20,6 +20,7 @@ static int
 hr_freehook(pTHX_ SV* object, MAGIC *mg)
 {
 	if(PL_dirty) {
+		HR_DEBUG("Not triggering during global destruction");
 		return;
 	}
 	HR_DEBUG("FREEHOOK: mg=%p, obj=%p", mg, object);
@@ -247,6 +248,37 @@ HR_PL_add_action_ptr(SV* objref, SV *hashref)
 {
 	HR_Action actions[] = {
 		HR_DREF_FLDS_ptr_from_hv(SvRV(objref), hashref),
+		HR_ACTION_LIST_TERMINATOR
+	};
+	HR_add_actions_real(objref, actions);
+}
+
+void HR_PL_add_action_ext_safe(
+	SV *objref,
+	UV key,
+	unsigned int atype,
+	unsigned int ktype,
+	SV *hashref,
+	unsigned int flags
+	)
+{
+	
+	flags |= HR_FLAG_HASHREF_RV;
+	/*Turn off flags which make no sense coming from perl*/
+	flags &= ( ~(HR_FLAG_STR_NO_ALLOC|HR_FLAG_SV_REFCNT_DEC) );
+	
+	if(ktype == HR_KEY_TYPE_STR) {
+		key = (UV)SvPV_nolen((SV*)key);
+	}
+	
+	HR_Action actions[] = {
+		{
+			.key = (char*)key,
+			.atype = atype,
+			.ktype = ktype,
+			.hashref = hashref,
+			.flags = flags
+		},
 		HR_ACTION_LIST_TERMINATOR
 	};
 	HR_add_actions_real(objref, actions);

@@ -2,7 +2,7 @@ Changes
 MANIFEST
 Makefile.PL
 README
-Guts.pod
+
 lib/Ref/Store.pm
 lib/Ref/Store/Common.pm
 lib/Ref/Store/PP/Magic.pm
@@ -14,11 +14,18 @@ lib/Ref/Store/Sweeping.pm
 lib/Ref/Store/Key.pm
 lib/Ref/Store/Attribute.pm
 lib/Ref/Store/Dumper.pm
+
+lib/Ref/Store/Guts.pod
+lib/Ref/Store/Walkthrough.pod
+
 t/00-impl_xs.t
 t/common.pm
 t/00-impl_pp.t
+test.pl
+
 hreg.c
 hrpriv.h
+hrdefs.h
 hr_hrimpl.c
 hr_implattr.c
 hr_duputil.h

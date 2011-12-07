@@ -28,6 +28,9 @@ static inline void action_sanitize_ptr(HR_Action *action);
     ((actionp->ktype == HR_KEY_TYPE_STR) \
             ? action_sanitize_str(actionp) : \
             action_sanitize_ptr(actionp)); \
+    if( (actionp->flags & (HR_FLAG_HASHREF_RV|HR_FLAG_SV_REFCNT_DEC)) ) { \
+        SvREFCNT_dec(actionp->hashref); \
+    } \
     action_clear(actionp);
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -38,15 +41,11 @@ static inline void action_sanitize_ptr(HR_Action *action);
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
 
-#ifndef HR_MAKE_PARENT_RV
-#define cmp_container(stored_container, uspec) \
-    (SvROK(uspec) && (stored_container == SvRV(uspec)))
-#else
-#define cmp_container _hashref_eq \
-    (SvROK(stored_container) \
-    && SvROK(uspec) \
-    && SvRV(container) == SvRV(uspec))
-#endif
+#define cmp_container_SV2RV(sv, rv) \
+    (SvROK(rv) && sv == SvRV(rv))
+
+#define cmp_container_RV2RV(rv1, rv2) \
+    (SvROK(rv1) && SvROK(rv2) && SvRV(rv1) == SvRV(rv2))
 
 static inline void action_sanitize_str(HR_Action *action)
 {
@@ -77,23 +76,26 @@ static inline HR_Action* action_find_similar(
     HR_DEBUG("Request to find ktype=%d, kp=%p", ktype, hashref);
     HR_Action *cur = action_list;
     *lastp = cur;
-    
-    for(; cur; *lastp = cur, cur = cur->next) {
         
+    for(; cur; *lastp = cur, cur = cur->next) {
         if(action_container_is_sv(cur)) {
-            HR_DEBUG("Comparing SV");
-            /*Prefilter for SV comparisons*/
-            if(!cmp_container(cur->hashref, hashref)) {
-                continue;
-            } else if(ktype == HR_KEY_TYPE_NULL) {
-                return cur;
-            }
-        } else if(ktype == HR_KEY_TYPE_NULL) {
-            if(cur->hashref == hashref) {
-                return cur;
+            
+            if(action_container_is_rv(cur)) {
+                if(!cmp_container_RV2RV(cur->hashref, hashref)) {
+                    continue;
+                }
             } else {
-                continue;
-            }
+                if(!cmp_container_SV2RV(cur->hashref, hashref)) {
+                    continue;
+                }
+            }            
+        } else if(cur->hashref != hashref) {
+            continue;
+        }
+        
+        /*Container Matches*/
+        if(ktype == HR_KEY_TYPE_NULL) {
+            return cur;
         }
         
         switch(ktype) {
@@ -172,20 +174,18 @@ HR_add_action(HR_Action *action_list,
     
     HR_DEBUG("Done assigning key");
     if(new_action->atype != HR_ACTION_TYPE_CALL_CFUNC) {
-#ifdef HR_MAKE_PARENT_RV
-        if(!(cur->hashref = newSVsv(new_action->hashref))) {
-            die("Couldn't get new SV!");
+        
+        if( (new_action->flags & HR_FLAG_HASHREF_RV) ) {
+            cur->hashref = newSVsv(new_action->hashref);
+            if( (new_action->flags & HR_FLAG_HASHREF_WEAKEN) ) {
+                sv_rvweaken(cur->hashref);
+            }
+        } else {
+            cur->hashref = SvRV(new_action->hashref);
         }
-        if(new_action->flags & HR_FLAG_HASHREF_WEAKEN) {
-            sv_rvweaken(cur->hashref);
-        }
-#else
-        cur->hashref = SvRV(new_action->hashref);
-#endif
     } else {
         cur->hashref = new_action->hashref;
-    }
-    HR_DEBUG("Flags=%d", new_action->flags);
+    }    
 }
 
 
@@ -196,16 +196,10 @@ HR_free_action(HR_Action *action)
 {
     HR_Action *ret = action->next;
     action_sanitize(action);
-#ifdef HR_MAKE_PARENT_RV
-    if(action->hashref) {
-        SvREFCNT_dec(action->hashref);
-    }
-#endif
     HR_DEBUG("Free: %p", action);
     Safefree(action);
     return ret;
 }
-
 
 HREG_API_INTERNAL
 HR_DeletionStatus_t
@@ -308,6 +302,35 @@ refcnt_ka_end(SV *sv, U32 old_refcount)
     }
 }
 
+static inline void
+invoke_coderef(SV *coderef, SV *object, char *key)
+{
+    SV *tmpref = sv_2mortal(newRV_inc(object));
+    U32 old_refcount = refcnt_ka_begin(object);
+    
+    dSP; /*Define stack variableS*/
+    
+    ENTER;
+    SAVETMPS;
+    
+    PUSHMARK(SP);
+    
+    XPUSHs(tmpref);
+    XPUSHs(sv_2mortal(newSVpv(key, strlen(key))));
+    
+    PUTBACK;
+    
+    
+    call_sv(coderef, G_DISCARD);
+    refcnt_ka_end(object, old_refcount);
+    
+    SPAGAIN;
+    PUTBACK;
+    FREETMPS;
+    
+    LEAVE;
+}
+
 static inline HR_Action*
 trigger_and_free_action(HR_Action *action_list, SV *object)
 {
@@ -321,16 +344,20 @@ trigger_and_free_action(HR_Action *action_list, SV *object)
         HR_DEBUG("Can't find hashref!");
         goto GT_ACTION_FREE;
     }
+    
     SV *container;
-#ifdef HR_MAKE_PARENT_RV
-    if(!(_xv_deref_complex_ok(action_list->hashref, container, HV))) {
-        warn("Can't extract HV from %p", action_list->hashref);
-        SvREFCNT_dec(action_list->hashref);
-        goto GT_ACTION_FREE;
+    
+    if( (action_list->flags & HR_FLAG_HASHREF_RV) ) {
+        if(!SvROK(action_list->hashref)) {
+            HR_DEBUG("Hashref is no longer a valid reference");
+            goto GT_ACTION_FREE;
+        } else {
+            container = SvRV(action_list->hashref);
+        }
+    } else {
+        container = action_list->hashref;
     }
-#else
-    container = action_list->hashref;
-#endif
+    
     U32 old_refcount;
     
     HR_DEBUG("ENTER! (LVL=%d)", recurse_level);
@@ -381,6 +408,15 @@ trigger_and_free_action(HR_Action *action_list, SV *object)
                     
                     break;
                 }
+                
+                case HR_ACTION_TYPE_CALL_CV: {
+                    warn("Support for SV keys for coderefs not yet implemented. "
+                         "Stringifying pointer");
+                    mk_ptr_string(arg_s, action_list->key);
+                    invoke_coderef(action_list->hashref, object, arg_s);
+                    break;
+                }
+                
                 case HR_ACTION_TYPE_CALL_CFUNC: {
                     HR_DEBUG("Calling C Function!");
                     ((HR_ActionCallback)(action_list->hashref)) (object, action_list->key);
@@ -391,33 +427,42 @@ trigger_and_free_action(HR_Action *action_list, SV *object)
                     die("Unhandled action type=%d", action_list->atype);
                     break;
             }
-            action_sanitize_ptr(action_list);
+            //action_sanitize_ptr(action_list);
             break;
         }
         
         case HR_KEY_TYPE_STR:
             old_refcount = refcnt_ka_begin(container);
-            HR_DEBUG("Removing string key=%s (A=%d)", action_list->key,
-                     action_list->atype);
-            hv_delete((HV*)container,
-                      action_list->key, strlen(action_list->key), G_DISCARD);
-            action_sanitize_str(action_list);
-            refcnt_ka_end(container, old_refcount);
             
+            switch(action_list->atype) {
+                case HR_ACTION_TYPE_DEL_HV: {
+                    HR_DEBUG("Removing string key=%s (A=%d)", action_list->key,
+                         action_list->atype);
+                    hv_delete((HV*)container,
+                      action_list->key, strlen(action_list->key), G_DISCARD);
+                    break;
+                }
+                case HR_ACTION_TYPE_CALL_CV: {
+                    invoke_coderef(action_list->hashref, object, action_list->key);
+                    break;
+                }
+                default:
+                    die("Unsupported action %d for string type", action_list->atype);
+                    break;
+            }
+            refcnt_ka_end(container, old_refcount);
+            //action_sanitize_str(action_list);
             break;
+        
+        /*Switch ktype*/
         default:
             die("Unhandled key type %d!", action_list->ktype);
             break;
     }
-
-#ifdef HR_MAKE_PARENT_RV
-    HR_DEBUG("Decrementing reference count for hashref");
-    SvREFCNT_dec(action_list->hashref);
-#endif
-
     GT_ACTION_FREE:
     ret = action_list->next;
-    action_clear(action_list);
+    action_sanitize(action_list);
+    //action_clear(action_list);
     HR_DEBUG("EXIT (LVL=%d)", recurse_level);
     recurse_level--;
     return ret;

@@ -1,35 +1,39 @@
 package Ref::Store::Common;
 use strict;
 use warnings;
-our @EXPORT;
 use base qw(Exporter);
-use Log::Fu { level => "debug" };
+use Carp qw(carp confess);
+our @EXPORT;
+
+my @logfuncs;
+
+$SIG{__DIE__} = \&confess;
 
 BEGIN {
-    my $i = 0;
-    foreach (qw(STRSCALAR REFSCALAR TABLEREF)) {
-        my $v = $i;
-        $i++;
-        {
-            no strict 'refs';
-            my $fname = "HR_KFLD_$_";
-            #log_debug("$fname=$v");
-            *{$fname} = sub () { $v };
-            push @EXPORT, $fname;
-        }
-    }
-    {
-        no strict 'refs';
-        $i++;
-        *{HR_KFLD_AVAILABLE} = sub () { $i };
-        push @EXPORT, 'HR_KFLD_AVAILABLE';
-        
-        *{HR_REVERSE_KEYS} = sub () { 0 };
-        *{HR_REVERSE_ATTRS} = sub () { 1 };
-        
-        push @EXPORT, map { 'HR_REVERSE_'.$_ } qw(KEYS ATTRS);
-    }
+    @logfuncs = map { $_, $_ . 'f' } map { 'log_' . $_ }
+        qw(warn crit info debug err);
 }
 
+use Module::Stubber
+    'Log::Fu' => [ { level => "debug" } ],
+    will_use => { map { $_ => \&carp } @logfuncs };
+
+use Constant::Generate [qw(
+    HR_KFLD_STRSCALAR
+    HR_KFLD_REFSCALAR
+    HR_KFLD_TABLEREF
+    HR_KFLD_AVAILABLE
+)], export => 1;
+
+use Constant::Generate [qw(
+    HR_REVERSE_KEYS
+    HR_REVERSE_ATTRS
+)], export => 1;
+
+BEGIN {
+    if(!$Module::Stubber::Status{'Log::Fu'}) {
+        push @EXPORT, @logfuncs;
+    }
+}
 
 1;

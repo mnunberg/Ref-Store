@@ -4,6 +4,7 @@
 
 #include "hreg.h"
 #include "hrpriv.h"
+#include "hrdefs.h"
 #include "hr_duputil.h"
 
 #include <string.h>
@@ -173,12 +174,12 @@ attr_get(SV *self, SV *attr, char *t, int options)
             HR_DEBUG("Could not locate attribute and O_CREAT not specified");
             goto GT_RET;
         } else if(SvROK(attr)) {
-            aobj = attr_encap_new(PKG_ATTR_ENCAP, attr_fullstr, attr, self);
+            aobj = attr_encap_new(HR_PKG_ATTR_ENCAP, attr_fullstr, attr, self);
             if( (options & STORE_OPT_STRONG_KEY) == 0) {
                 sv_rvweaken( ((hrattr_encap*)attr_from_sv(SvRV(aobj)))->obj_rv );
             }
         } else {
-            aobj = attr_simple_new(PKG_ATTR_SCALAR, attr_fullstr, self);
+            aobj = attr_simple_new(HR_PKG_ATTR_SCALAR, attr_fullstr, self);
         }
         
         a_ent = hv_store(REF2HASH(attr_lookup),
@@ -538,7 +539,6 @@ void HRXSATTR_ithread_predup(SV *self, SV *table, HV *ptr_map)
                HR_HKEY_LOOKUP_NULL);
     
     hv_iterinit(attr->attrhash);
-    
     while( (vtmp = hv_iternextsv(attr->attrhash, &ktmp, &tmplen))) {
         HR_Dup_Vinfo *vi = hr_dup_get_vinfo(ptr_map, SvRV(vtmp), 1);
         if(!vi->vhash) {
@@ -577,23 +577,28 @@ void HRXSATTR_ithread_postdup(SV *newself, SV *newtable, HV *ptr_map)
     if(n_keys) {
         char **keylist = NULL;
         char **klist_head = NULL;
-        int tmp_len;
-
-        Newx(keylist, n_keys+1, char*);
-        keylist[n_keys] = NULL;
+        int tmp_len, i;
+        HR_DEBUG("Have %d keys", n_keys);
+        Newx(keylist, n_keys, char*);
         klist_head = keylist;
-        while(hv_iternextsv(attr->attrhash, ++keylist, &tmp_len)); /*No body*/
         
-        for(keylist = klist_head; *keylist; ++keylist) {
-            SV **stored = hv_delete(attr->attrhash, *keylist, strlen(*keylist), 0);
-            assert(*stored);
-            mk_ptr_string(new_s, SvRV(*stored));
-            hv_store(attr->attrhash, new_s, strlen(new_s), *stored, 0);
+		while(hv_iternextsv(attr->attrhash, keylist++, &tmp_len));
+        /*No body*/
+
+        for(i=0, keylist = klist_head; i < n_keys; i++) {
+            HR_DEBUG("Key: %s", keylist[i]);
+            SV *stored = hv_delete(attr->attrhash, keylist[i], strlen(keylist[i]), 0);
+            assert(stored);
+            assert(SvROK(stored));
+
+            mk_ptr_string(new_s, SvRV(stored));
+            hv_store(attr->attrhash, new_s, strlen(new_s), stored, 0);
             HR_Action v_actions[] = {
-                HR_DREF_FLDS_ptr_from_hv(SvRV(*stored), new_attrhash_ref),
+                HR_DREF_FLDS_ptr_from_hv(SvRV(stored), new_attrhash_ref),
                 HR_ACTION_LIST_TERMINATOR
             };
-            HR_add_actions_real(*stored, v_actions);
+			HR_DEBUG("Will add new actions for value in attrhash");
+            HR_add_actions_real(stored, v_actions);
         }
         Safefree(klist_head);
     }
@@ -602,6 +607,8 @@ void HRXSATTR_ithread_postdup(SV *newself, SV *newtable, HV *ptr_map)
         HR_DREF_FLDS_arg_for_cfunc(SvRV(newself), &attr_destroy_trigger),
         HR_ACTION_LIST_TERMINATOR
     };
+
+	HR_DEBUG("Will add new actions for attribute object");
     HR_add_actions_real(newself, attr_actions);
     
     if(attr->encap) {
@@ -616,6 +623,23 @@ void HRXSATTR_ithread_postdup(SV *newself, SV *newtable, HV *ptr_map)
             HR_DREF_FLDS_arg_for_cfunc(SvRV(new_encap), (SV*)&encap_attr_destroy_hook),
             HR_ACTION_LIST_TERMINATOR
         };
+		HR_DEBUG("Will add actions for new encapsulated object");
         HR_add_actions_real(new_encap, encap_actions);
+
+        aencap->obj_rv = new_encap;
+        aencap->obj_paddr = SvRV(new_encap);
+
+        /*We also need to change our key string...*/
+        char *oldstr = attr_strkey(aencap, sizeof(hrattr_encap));
+        char *oldptr = strrchr(oldstr, '#');
+        assert(oldptr);
+        HR_DEBUG("Old attr string: %s", oldstr);
+        oldptr++;
+        *(oldptr) = '\0';
+        mk_ptr_string(newptr, aencap->obj_paddr);
+        SvGROW(SvRV(newself), sizeof(hrattr_encap)
+                +strlen(oldstr)+strlen(newptr)+1);
+        strcat(oldstr, newptr);
+        HR_DEBUG("NEw string: %s", oldstr);
     }
 }
