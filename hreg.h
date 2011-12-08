@@ -6,7 +6,7 @@
 #include "XSUB.h"
 #include <stdint.h>
 
-//#define HR_DEBUG
+/*#define HR_DEBUG*/
 
 #ifndef HR_DEBUG
 static int _hr_enable_debug = -1;
@@ -31,15 +31,28 @@ static int _hr_enable_debug = -1;
     char vname[128] = { '\0' }; \
     sprintf(vname, "%lu", ptr);
 
+#ifdef __GNUC__
+#define inline __inline__
+#endif
+
+#if __STDC__ && __STDC_VERSION__ <= 199409L && !defined __GNUC__
+#warning "c89 mode and GCC not detected. Not using inline"
+#define HR_INLINE static
+#else
+#define HR_INLINE static inline
+#endif
+
 
 #define HREG_API_INTERNAL
+
+
 
 typedef enum {
     HR_ACTION_TYPE_NULL         = 0,
     HR_ACTION_TYPE_DEL_AV       = 1,
     HR_ACTION_TYPE_DEL_HV       = 2,
     HR_ACTION_TYPE_CALL_CV      = 3,
-    HR_ACTION_TYPE_CALL_CFUNC   = 4,
+    HR_ACTION_TYPE_CALL_CFUNC   = 4
 } HR_ActionType_t;
 
 typedef enum {
@@ -47,14 +60,16 @@ typedef enum {
     HR_KEY_TYPE_PTR             = 1,
     HR_KEY_TYPE_STR             = 2,
     
-    /*Extended options for searching*/
     
+    /*Extended options for searching*/
     /*RV implies we should:
      1) check the flags to see if the stored key is an RV,
      2) compare the keys performing SvRV on the stored key,
         assume current search spec is already dereferenced
     */
-    HR_KEY_STYPE_PTR_RV          = 100 
+    HR_KEY_STYPE_PTR_RV          = 100,
+    /*Sometimes a container is opaque (like a C callback)*/
+    HR_KEY_SFLAG_HASHREF_OPAQUE  = 0x2000
     
 } HR_KeyType_t;
 
@@ -66,11 +81,11 @@ typedef enum {
 
 
 enum {
-    HR_FLAG_STR_NO_ALLOC        = 1 << 0, //Do not copy/allocate/free string
-    HR_FLAG_HASHREF_WEAKEN      = 1 << 1, //Weaken hashref, assumes HASHREF_RV
-    HR_FLAG_SV_REFCNT_DEC       = 1 << 2, //Key is an SV whose REFCNT we should decrease
-    HR_FLAG_PTR_NO_STRINGIFY    = 1 << 3, //Do not stringify the pointer
-    HR_FLAG_HASHREF_RV          = 1 << 4, //hashref is a reference, not a plain SV
+    HR_FLAG_STR_NO_ALLOC        = 1 << 0, /*Do not copy/allocate/free string*/
+    HR_FLAG_HASHREF_WEAKEN      = 1 << 1, /*Weaken hashref, assumes HASHREF_RV*/
+    HR_FLAG_SV_REFCNT_DEC       = 1 << 2, /*Key is an SV whose REFCNT we should decrease*/
+    HR_FLAG_PTR_NO_STRINGIFY    = 1 << 3, /*Do not stringify the pointer*/
+    HR_FLAG_HASHREF_RV          = 1 << 4, /*hashref is a reference, not a plain SV*/
 };
 
 /*We re-use the STR_NO_ALLOC field for an SV flag, which is obviously a TYPE_PTR*/
@@ -80,17 +95,17 @@ enum {
 #define action_container_is_sv(aptr) ((aptr->atype != HR_ACTION_TYPE_CALL_CFUNC))
 #define action_container_is_rv(aptr) ((aptr->flags & (HR_FLAG_HASHREF_RV)))
 typedef struct HR_Action HR_Action;
-typedef void(*HR_ActionCallback)(void*,SV*);
+typedef void(*HR_ActionCallback)(void*,SV*,HR_Action*);
 
 struct
 __attribute__((__packed__))
 HR_Action {
     HR_Action   *next;
-    void        *key;       //Key
-    unsigned int atype : 3; //Action type
-    unsigned int ktype : 2; //Key type
-    SV          *hashref;   //Container
-    unsigned int flags : 5; //Flags
+    void        *key;       /*Key*/
+    unsigned int atype : 3; /*Action type*/
+    unsigned int ktype : 2; /*Key type*/
+    SV          *hashref;   /*Container*/
+    unsigned int flags : 5; /*Flags*/
 };
 
 #define HR_ACTION_LIST_TERMINATOR \
@@ -130,7 +145,7 @@ HR_nullify_action(HR_Action *action_list, SV *hashref, void *key, HR_KeyType_t k
 HREG_API_INTERNAL
 HR_Action*
 HR_free_action(HR_Action *action);
-
+/*
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
@@ -138,6 +153,7 @@ HR_free_action(HR_Action *action);
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
+*/
 HREG_API_INTERNAL
 void HR_add_actions_real(SV *objref, HR_Action *actions);
 
@@ -188,7 +204,7 @@ void HRXSATTR_ithread_postdup(SV *newself, SV *newtable, HV *ptr_map);
 
 /*H::R API*/
 void HRA_store_sk(SV *hr, SV *ukey, SV *value, ...);
-SV* HRA_fetch_sk(SV *hr, SV *ukey); //we manipulate perl's stack in this one
+SV* HRA_fetch_sk(SV *hr, SV *ukey); /*we manipulate perl's stack in this one*/
 
 void HRA_store_a(SV *hr, SV *attr, char *t, SV *value, ...);
 void  HRA_fetch_a(SV *hr, SV *attr, char *t);

@@ -48,8 +48,8 @@ typedef struct {
 static inline SV *attr_get(SV *self, SV *attr, char *t, int options);
 static inline SV *attr_new_common(char *pkg, char *key, SV *table, int attrsize);
 
-static void attr_destroy_trigger(SV *self, SV *encap_obj);
-static void encap_attr_destroy_hook(SV *encap_obj, SV *attr_sv);
+static void attr_destroy_trigger(SV *self, SV *encap_obj, HR_Action *action_list);
+static void encap_attr_destroy_hook(SV *encap_obj, SV *attr_sv, HR_Action *action_list);
 
 static inline SV* attr_simple_new(char *pkg, char *astr, SV *table);
 static inline SV* attr_encap_new(char *pkg, char *astr, SV *encapped, SV *table);
@@ -345,7 +345,7 @@ void HRA_unlink_a(SV *self, SV* attr, char *t)
     if(!aobj) {
         return;
     }
-    attr_destroy_trigger(SvRV(aobj), NULL);
+    attr_destroy_trigger(SvRV(aobj), NULL, NULL);
     HR_DEBUG("UNLINK_ATTR DONE");
 }
 
@@ -365,6 +365,7 @@ static inline void attr_delete_from_vhash(SV *self, SV *value)
     
     vhash = get_vhash_from_rlookup(rlookup, vaddr, 0);
     
+    U32 old_refcount = refcnt_ka_begin(value);
     if(vhash) {
         HR_DEBUG("Deleting '%s' from vhash=%p", astr, SvRV(vhash));
         hv_delete(REF2HASH(vhash), astr, strlen(astr), G_DISCARD);
@@ -374,7 +375,7 @@ static inline void attr_delete_from_vhash(SV *self, SV *value)
             hv_delete_ent(REF2HASH(rlookup), vaddr, G_DISCARD, 0);
         }
     }
-
+    refcnt_ka_end(value, old_refcount);
 }
 
 static inline void attr_delete_value_from_attrhash(SV *self, SV *value)
@@ -420,7 +421,7 @@ Encapsulated object has been deleted
  
 /*First argument is the object, second is the argument */
 
-static void encap_attr_destroy_hook(SV *encap_obj, SV *attr_sv)
+static void encap_attr_destroy_hook(SV *encap_obj, SV *attr_sv, HR_Action *action_list)
 {
     HR_DEBUG("Encap hook called!");
     hrattr_encap *aencap = attr_encap_cast(attr_from_sv(attr_sv));
@@ -429,11 +430,11 @@ static void encap_attr_destroy_hook(SV *encap_obj, SV *attr_sv)
     aencap->obj_rv = NULL;
     
     SvREFCNT_inc(attr_sv);
-    attr_destroy_trigger(attr_sv, NULL);
+    attr_destroy_trigger(attr_sv, NULL, NULL);
     SvREFCNT_dec(attr_sv);
 }
 
-static void attr_destroy_trigger(SV *self_sv, SV *encap_obj)
+static void attr_destroy_trigger(SV *self_sv, SV *encap_obj, HR_Action *action_list)
 {
     HR_DEBUG("self_sv=%p", self_sv);
     
@@ -469,18 +470,24 @@ static void attr_destroy_trigger(SV *self_sv, SV *encap_obj)
     SV *attrhash_ref = NULL, *self_ref = NULL;
     RV_Newtmp( attrhash_ref, ((SV*)attr->attrhash) );
     RV_Newtmp( self_ref, self_sv );
-        
-    HR_PL_del_action_container(self_ref, (SV*)&attr_destroy_trigger);
+    
+    if(action_list) {
+        while( (HR_nullify_action(action_list,
+                                (SV*)&attr_destroy_trigger,
+                                NULL,
+                                HR_KEY_TYPE_NULL|HR_KEY_SFLAG_HASHREF_OPAQUE)
+                == HR_ACTION_DELETED) );
+        /*No body*/
+    } else {
+        HR_PL_del_action_container(self_ref, (SV*)&attr_destroy_trigger);
+    }
+    
     HR_DEBUG("Deleted self destroy hook");
     
-    U32 old_refcount = SvREFCNT(self_sv);
-    HR_DEBUG("Our refcount is now %lu");
     
     if(attr->encap) {
         hrattr_encap *aencap = (hrattr_encap*)attr;
-        if(aencap->obj_rv) {
-            SvREFCNT_dec( aencap->obj_rv );
-        }
+        
         if(aencap->obj_paddr) {
             SV *encap_ref = NULL;
             RV_Newtmp(encap_ref, (SV*)aencap->obj_paddr);
@@ -489,6 +496,11 @@ static void attr_destroy_trigger(SV *self_sv, SV *encap_obj)
             RV_Freetmp(encap_ref);
             HR_DEBUG("Deleted encap destroy hook");
         }
+        
+        if(aencap->obj_rv) {
+            SvREFCNT_dec( aencap->obj_rv );
+        }
+
     }
     
     if(attr_lookup) {
@@ -498,11 +510,15 @@ static void attr_destroy_trigger(SV *self_sv, SV *encap_obj)
                   strlen(attr_strkey(attr, attrsz)),
                   G_DISCARD);
     }
-        
+    
+    U32 old_refcount = refcnt_ka_begin(self_sv);
     while( (vtmp = hv_iternextsv(attr->attrhash, &ktmp, &tmplen)) ) {
         SV *vptr, *vref;
         sscanf(ktmp, "%lu", &vptr); /*Don't ask.. also, uses slightly less memory*/
         RV_Newtmp(vref, vptr);
+        
+        U32 old_v_refcount = refcnt_ka_begin(vptr);
+        
         attr_delete_value_from_attrhash(self_ref, vref);
         if(SvROK(vref) && parent) {
             HR_DEBUG("Deleting vhash entry");
@@ -511,11 +527,15 @@ static void attr_destroy_trigger(SV *self_sv, SV *encap_obj)
             HR_DEBUG("Eh?");
         }
         RV_Freetmp(vref);
+        
+        refcnt_ka_end(vptr, old_v_refcount);
     }
     
     SvREFCNT_dec(attr->attrhash);
     RV_Freetmp(self_ref);
     RV_Freetmp(attrhash_ref);
+    
+    refcnt_ka_end(self_sv, old_refcount);
     HR_DEBUG("Attr destroy done");
 }
 
@@ -526,7 +546,9 @@ void HRXSATTR_ithread_predup(SV *self, SV *table, HV *ptr_map)
     /*Make sure our attribute hash is visible to perl space*/
     SV *attrhash_ref;
     RV_Newtmp(attrhash_ref, (SV*)attr->attrhash);
+    
     hr_dup_store_rv(ptr_map, attrhash_ref);
+    
     RV_Freetmp(attrhash_ref);
     
     char *ktmp;
@@ -568,8 +590,11 @@ void HRXSATTR_ithread_postdup(SV *newself, SV *newtable, HV *ptr_map)
 {
     hrattr_simple *attr = attr_from_sv(SvRV(newself));
     
+    HR_DEBUG("Fetching new attrhash_ref");
+    
     SV *new_attrhash_ref = hr_dup_newsv_for_oldsv(ptr_map, attr->attrhash, 0);
     attr->attrhash = SvRV(new_attrhash_ref);
+    HR_DEBUG("New attrhash: %p", attr->attrhash);
         
     /*Now do the equivalent of: my @keys = keys %attrhash; foreach my $key (@keys)*/
     int n_keys = hv_iterinit(attr->attrhash);
@@ -631,7 +656,9 @@ void HRXSATTR_ithread_postdup(SV *newself, SV *newtable, HV *ptr_map)
 
         /*We also need to change our key string...*/
         char *oldstr = attr_strkey(aencap, sizeof(hrattr_encap));
-        char *oldptr = strrchr(oldstr, '#');
+        
+        char *oldptr = strrchr(oldstr, KT_DELIM[0]);
+        
         assert(oldptr);
         HR_DEBUG("Old attr string: %s", oldstr);
         oldptr++;
@@ -640,6 +667,6 @@ void HRXSATTR_ithread_postdup(SV *newself, SV *newtable, HV *ptr_map)
         SvGROW(SvRV(newself), sizeof(hrattr_encap)
                 +strlen(oldstr)+strlen(newptr)+1);
         strcat(oldstr, newptr);
-        HR_DEBUG("NEw string: %s", oldstr);
+        HR_DEBUG("New string: %s", oldstr);
     }
 }

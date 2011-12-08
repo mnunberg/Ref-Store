@@ -31,6 +31,7 @@ WriteMakefile(
     OBJECT             => join(".o ", @modules) . ".o Store.o",
     dist                => { COMPRESS => 'gzip -9f', SUFFIX => 'gz', },
     clean               => { FILES => 'Ref-Store-* '. $GENERATED_FILES },
+    #CCFLAGS              => '-std=gnu89',
 );
 
 

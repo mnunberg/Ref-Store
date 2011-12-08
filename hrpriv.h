@@ -8,8 +8,6 @@
 
 #define REF2HASH(ref) ((HV*)(SvRV(ref)))
 
-#define HR_INLINE static inline
-
 #define RV_Newtmp(vname, referrent) \
     vname = newRV_noinc((referrent));
 
@@ -17,6 +15,8 @@
     SvRV_set(rv, NULL); \
     SvROK_off(rv); \
     SvREFCNT_dec(rv);
+
+
 
 
 enum {
@@ -48,6 +48,31 @@ enum {
     }
 
 extern HSpec HR_LookupKeys[];
+
+#define FAKE_REFCOUNT (1 << 16)
+HR_INLINE U32
+refcnt_ka_begin(SV *sv)
+{
+    U32 ret = SvREFCNT(sv);
+    SvREFCNT(sv) = FAKE_REFCOUNT;
+    return ret;
+}
+
+HR_INLINE void
+refcnt_ka_end(SV *sv, U32 old_refcount)
+{
+    I32 effective_refcount = old_refcount + (SvREFCNT(sv) - FAKE_REFCOUNT);
+    if(effective_refcount <= 0 && old_refcount > 0) {
+        SvREFCNT(sv) = 1;
+        SvREFCNT_dec(sv);
+    } else {
+        SvREFCNT(sv) = effective_refcount;
+        if(effective_refcount != SvREFCNT(sv)) {
+            die("Detected negative refcount!");
+        }
+    }
+}
+
 
 HR_INLINE void
 get_hashes(HV *table, ...)

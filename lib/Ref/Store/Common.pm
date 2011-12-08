@@ -3,7 +3,7 @@ use strict;
 use warnings;
 use base qw(Exporter);
 use Carp qw(carp confess);
-our @EXPORT;
+our (@EXPORT,%EXPORT_TAGS,@EXPORT_OK);
 
 my @logfuncs;
 
@@ -29,6 +29,13 @@ use Constant::Generate [qw(
     HR_REVERSE_KEYS
     HR_REVERSE_ATTRS
 )], export => 1;
+
+use Constant::Generate [qw(
+    DUPIDX_RLOOKUP
+    DUPIDX_FLOOKUP
+    DUPIDX_ALOOKUP
+    DUPIDX_SLOOKUP
+)], -tag => 'pp_constants' => -export_ok => 1;
 
 BEGIN {
     if(!$Module::Stubber::Status{'Log::Fu'}) {

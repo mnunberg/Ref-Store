@@ -43,7 +43,7 @@ get_v_hashref(hrk_encap *ke, SV* value);
 /*We find our information about ourselves here, and place it inside our
  private pointer table*/
 
-static void k_encap_cleanup(SV *ksv, SV *_)
+static void k_encap_cleanup(SV *ksv, SV *_, HR_Action *action_list)
 {
     /*Find our forward entry from the stringified object pointer*/
     hrk_encap *ke = keptr_from_sv(ksv);

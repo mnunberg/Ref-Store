@@ -135,6 +135,10 @@ hr_dup_newsv_for_oldsv(HV *ptr_map, void *oldptr, int copy)
     mk_ptr_string(old_s, oldptr);
     HR_DEBUG("Fetching for %lu (%p)", oldptr, oldptr);
     SV **ret = hv_fetch(ptr_map, old_s, strlen(old_s), 0);
+    if(!ret) {
+        HR_DEBUG("Couldn't fetch!");
+        sv_dump(ptr_map);
+    }
     assert(ret);
     if(copy) {
         return newSVsv(*ret);
@@ -149,7 +153,9 @@ hr_dup_store_rv(HV *ptr_map, SV *rv)
     assert(SvROK(rv));
     
     mk_ptr_string(sv_s, SvRV(rv));
+    HR_DEBUG("Checking to see if %s is already stored", sv_s);
     if(!hv_exists(ptr_map, sv_s, strlen(sv_s))) {
+        HR_DEBUG("It isn't!");
         SV *stored = newSVsv(rv);
         sv_rvweaken(stored);
         hv_store(ptr_map, sv_s, strlen(sv_s), stored, 0);

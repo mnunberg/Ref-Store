@@ -1,4 +1,5 @@
 #include "hreg.h"
+#include "hrpriv.h"
 #include <perl.h>
 
 
@@ -76,10 +77,13 @@ static inline HR_Action* action_find_similar(
     HR_DEBUG("Request to find ktype=%d, kp=%p", ktype, hashref);
     HR_Action *cur = action_list;
     *lastp = cur;
-        
+    
+    int uhashref_is_opaque = (ktype & HR_KEY_SFLAG_HASHREF_OPAQUE);
+    ktype &= (~HR_KEY_SFLAG_HASHREF_OPAQUE);
+    
+    /*Prefilter for container comparison*/
     for(; cur; *lastp = cur, cur = cur->next) {
-        if(action_container_is_sv(cur)) {
-            
+        if(uhashref_is_opaque == 0 && action_container_is_sv(cur)) {
             if(action_container_is_rv(cur)) {
                 if(!cmp_container_RV2RV(cur->hashref, hashref)) {
                     continue;
@@ -278,29 +282,6 @@ HR_trigger_and_free_actions(HR_Action *action_list, SV *object)
     HR_DEBUG("Done");
 }
 
-#define FAKE_REFCOUNT (1 << 16)
-static inline U32
-refcnt_ka_begin(SV *sv)
-{
-    U32 ret = SvREFCNT(sv);
-    SvREFCNT(sv) = FAKE_REFCOUNT;
-    return ret;
-}
-
-static inline void
-refcnt_ka_end(SV *sv, U32 old_refcount)
-{
-    I32 effective_refcount = old_refcount + (SvREFCNT(sv) - FAKE_REFCOUNT);
-    if(effective_refcount <= 0 && old_refcount > 0) {
-        SvREFCNT(sv) = 1;
-        SvREFCNT_dec(sv);
-    } else {
-        SvREFCNT(sv) = effective_refcount;
-        if(effective_refcount != SvREFCNT(sv)) {
-            die("Detected negative refcount!");
-        }
-    }
-}
 
 static inline void
 invoke_coderef(SV *coderef, SV *object, char *key)
@@ -419,7 +400,7 @@ trigger_and_free_action(HR_Action *action_list, SV *object)
                 
                 case HR_ACTION_TYPE_CALL_CFUNC: {
                     HR_DEBUG("Calling C Function!");
-                    ((HR_ActionCallback)(action_list->hashref)) (object, action_list->key);
+                    ((HR_ActionCallback)(action_list->hashref)) (object, action_list->key, action_list);
                     break;
                 }
                 

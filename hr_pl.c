@@ -2,8 +2,8 @@
 #include <stdint.h>
 #include "hreg.h"
 
-static inline MAGIC* get_our_magic(SV* objref, int create);
-static inline void free_our_magic(SV* objref);
+HR_INLINE MAGIC* get_our_magic(SV* objref, int create);
+HR_INLINE void free_our_magic(SV* objref);
 
 static int hr_freehook(pTHX_ SV* target, MAGIC *mg);
 static int hr_duphook(pTHX_ MAGIC *mg, CLONE_PARAMS *param);
@@ -25,22 +25,24 @@ hr_freehook(pTHX_ SV* object, MAGIC *mg)
 	}
 	HR_DEBUG("FREEHOOK: mg=%p, obj=%p", mg, object);
 	HR_DEBUG("Object refcount: %d", SvREFCNT(object));
-	
 	OURMAGIC_infree(mg) = 1;
-	
+#if PERL_REVISION == 5 && PERL_VERSION < 10
+#warning "Nasty SvMAGIC_set hack"
+	SvMAGIC_set(object, mg);
+#endif
     HR_trigger_and_free_actions(_mg_action_list(mg), object);
 }
 
 /*This is called for new threads, we initialize a new HR_Action list,
  because old lists would presumably reference variables of the parent thread*/
-static int
+HR_INLINE int
 hr_duphook(pTHX_ MAGIC *mg, CLONE_PARAMS *param)
 {
 	HR_DEBUG("Initializing new empty action list");
 	Newxz(mg->mg_ptr, 1, HR_Action);
 }
 
-static inline MAGIC*
+HR_INLINE MAGIC*
 get_our_magic(SV* objref, int create)
 {
 	MAGIC *mg;
@@ -102,11 +104,12 @@ get_our_magic(SV* objref, int create)
 	return mg;
 }
 
-static inline void
+HR_INLINE void
 free_our_magic(SV* target)
 {
     MAGIC *mg_last = mg_find(target, PERL_MAGIC_ext);
     MAGIC *mg_cur = mg_last;
+	HR_Action *action;
 	
     for(;mg_cur; mg_last = mg_cur, mg_cur = mg_cur->mg_moremagic
         ) {
@@ -119,7 +122,7 @@ free_our_magic(SV* target)
         return;
     }
     
-    HR_Action *action = _mg_action_list(mg_cur);
+    action = _mg_action_list(mg_cur);
     if(action) {
 		HR_DEBUG("Found action=%p", action);
 		while((action = HR_free_action(action)));
@@ -152,9 +155,6 @@ HR_add_actions_real(SV* objref, HR_Action *actions)
     }
     
     while(actions->ktype) {
-        HR_DEBUG("ADD: T=%d, A=%d, K=%p, H=%p", actions->ktype,
-				 actions->atype, actions->key,
-                 SvRV(actions->hashref));
         if(!actions->hashref) {
             die("Must have hashref!");
         }
@@ -169,10 +169,12 @@ HR_PL_add_actions(SV *objref, char *blob) {
 }
 
 
-static inline void pl_del_action_common(SV *objref, SV *hashref,
+HR_INLINE void
+pl_del_action_common(SV *objref, SV *hashref,
 										void *key, HR_KeyType_t ktype)
 {
 	MAGIC *mg = get_our_magic(objref, 0);
+	int dv; /*Deletion status*/
     HR_DEBUG("DELETE: O=%p, SV=%p", objref, hashref);
 	if(!mg) {
 		return;
@@ -185,7 +187,7 @@ static inline void pl_del_action_common(SV *objref, SV *hashref,
 		return;
 	}
 	
-    int dv = HR_ACTION_NOT_FOUND;
+    dv = HR_ACTION_NOT_FOUND;
     while( (dv = HR_del_action(
 			_mg_action_list(mg), hashref, key, ktype)) == HR_ACTION_DELETED );
     /*no body*/

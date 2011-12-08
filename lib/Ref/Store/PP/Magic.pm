@@ -1,24 +1,37 @@
+
 package Ref::Store::PP::Magic;
 use strict;
 use warnings;
 use Variable::Magic qw(cast dispell wizard getdata);
-use Scalar::Util qw(weaken refaddr reftype);
+use Scalar::Util qw(weaken refaddr reftype isweak);
 use base qw(Exporter);
 use Data::Dumper;
 use Log::Fu;
+use Devel::Peek;
 
+use Constant::Generate [qw(
+    IDX_KEY
+    IDX_TARGET
+)];
 
 our @EXPORT = qw(
     hr_pp_trigger_register
     hr_pp_trigger_free
     hr_pp_trigger_unregister
+    hr_pp_trigger_replace_key
     hr_pp_purge
 );
 
-our $Wizard = wizard(
-    data => sub { $_[1] },
-    free => \&trigger_fire
-);
+our $Wizard;
+
+sub _init_wizard {
+    $Wizard = wizard(
+        data => sub { $_[1] },
+        free => \&trigger_fire
+    );
+}
+
+_init_wizard();
 
 sub hr_pp_purge {
     my ($ref) = @_;
@@ -60,25 +73,20 @@ sub hr_pp_trigger_unregister {
     
     if(!@$actions) {
         &dispell($ref, $Wizard);
-    }    
+    }
 }
-use Carp qw(cluck);
-use Scalar::Util qw(weaken isweak);
+
 sub hr_pp_trigger_register {
     
-    my ($ref,$key,$target) = @_;
-    
-    #log_errf("$ref: KEY=$key, TARGET=$target");
-    #cluck("Hi!");
+    my ($ref,$key,$target) = @_;    
     my $data = &getdata($ref, $Wizard);
+    my $datum = [];
+    @$datum[IDX_KEY,IDX_TARGET] = ($key,$target);
+    weaken($datum->[IDX_TARGET]);
+    weaken($datum->[IDX_KEY]) if ref $key;
     if(!$data) {
-        #log_err("No data. Casting");
-        $data = [ ];
+        $data = [ $datum ];
         &cast($ref, $Wizard, $data);
-        my $datum = [ $key, $target ];
-        weaken($datum->[1]);
-        weaken($datum->[0]) if ref $datum->[0];
-        push @$data, $datum;
         return;
     }
     
@@ -86,14 +94,43 @@ sub hr_pp_trigger_register {
         my ($ekey,$etarget) = @$_;
         if (defined $etarget && defined $ekey &&
             $target == $etarget && $key eq $ekey) {
-            #log_warn("DUP!");
             return;
         }
     }
-    my $datum = [$key, $target];
-    weaken($datum->[1]);
-    weaken($datum->[0]) if ref $datum->[0];
     push @$data, $datum;
+}
+
+use Carp qw(cluck);
+
+#This one exists primarily for thread duplication
+sub hr_pp_trigger_replace_key {
+    my ($ref,$key,$target,$newkey) = @_;
+    log_warn("Have wizard: $Wizard", $$Wizard);
+    Devel::Peek::Dump($$Wizard);
+        
+    my $data = &getdata($ref,$Wizard);
+    if(!$data) {
+        cluck("");
+        log_warn("No data yet? ($ref)");
+        hr_pp_trigger_register($ref,$key,$target);
+        log_warn("Casted!");
+        return;
+    } else {
+        log_warn("Have Data!");
+    }
+    
+    if(!$target) {
+        cluck("Got undefined target!");
+    }
+    foreach (@$data) {
+        my ($ekey,$etarget) = @$_;
+        if($etarget == $target && $ekey eq $key) {
+            $_->[IDX_KEY] = $key;
+            weaken($_->[IDX_KEY]) if ref $key;
+            return;
+        }
+    }
+    hr_pp_trigger_register($ref,$key,$target);
 }
 
 1;

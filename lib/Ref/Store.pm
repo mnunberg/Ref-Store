@@ -7,6 +7,7 @@ use Scalar::Util qw(weaken);
 use Ref::Store::Common;
 use Ref::Store::Attribute;
 use Ref::Store::Dumper;
+use Scalar::Util qw(weaken isweak);
 
 
 our $VERSION = '0.02_0';
@@ -538,23 +539,33 @@ sub ithread_postdup {
 		my $new_kstring = $kobj->kstring;
 		
 		next unless $new_kstring ne $kstring;
+		my $weak_key = isweak($self->scalar_lookup->{$kstring});
+		my $weak_val = isweak($self->forward->{$kstring});
 		
 		delete $self->scalar_lookup->{$kstring};
 		my $v = delete $self->forward->{$kstring};
 		
 		$self->scalar_lookup->{$new_kstring} = $kobj;
 		$self->forward->{$new_kstring} = $v;
-	}
-	
-	while ( my($astring,$aobj) = each %{$self->attr_lookup}) {
 		
+		if($weak_key) {
+			weaken($self->scalar_lookup->{$new_kstring});
+		}
+		if($weak_val) {
+			weaken($self->forward->{$new_kstring});
+		}
+	}
+		
+	@oldkeys = keys %{$self->attr_lookup};
+	foreach my $astring (@oldkeys) {
+		my $aobj = $self->attr_lookup->{$astring};
 		$aobj->ithread_postdup($self, \%CloneAddrs);
 		my $new_astring = $aobj->kstring;
 		
 		next unless $new_astring ne $astring;
 		
 		delete $self->attr_lookup->{$astring};
-		$self->attr_lookup->{$new_astring} = $aobj;
+		weaken($self->attr_lookup->{$new_astring} = $aobj);
 	}
 }
 
