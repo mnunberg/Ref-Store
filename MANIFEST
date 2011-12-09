@@ -14,9 +14,11 @@ lib/Ref/Store/Sweeping.pm
 lib/Ref/Store/Key.pm
 lib/Ref/Store/Attribute.pm
 lib/Ref/Store/Dumper.pm
+lib/Ref/Store/ThreadUtil.pm
 
 lib/Ref/Store/Guts.pod
 lib/Ref/Store/Walkthrough.pod
+lib/Ref/Store/PROTOSPEC.pod
 
 t/00-impl_xs.t
 t/common.pm

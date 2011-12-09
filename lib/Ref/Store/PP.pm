@@ -41,9 +41,11 @@ use Ref::Store::Common qw(:pp_constants);
 use Ref::Store::PP::Magic;
 use Scalar::Util qw(weaken isweak);
 use Log::Fu;
-use constant {
-    HR_KFLD_VHREF => HR_KFLD_AVAILABLE() + 1
-};
+use Ref::Store::ThreadUtil;
+use Devel::GlobalDestruction;
+
+use constant HR_KFLD_VHREF => HR_KFLD_AVAILABLE() + 1;
+
 use Devel::Peek qw(Dump);
 
 sub new {
@@ -61,18 +63,15 @@ sub new {
     return $self;
 }
 
-my $DUPKEY_KENCAP_PFIX = '__PP_KENCAP:';
-my $DUPKEY_LINFO_PFIX = '__PP_OLD_LOOKUPS:';
 
 sub ithread_predup {
-    my ($self,$ptr_map,$value) = @_;
-    $ptr_map->{
-        $DUPKEY_KENCAP_PFIX . $self->[HR_KFLD_STRSCALAR]
-    } = $value + 0;
+    my ($self,$table,$ptr_map,$value) = @_;
+    hr_thrutil_store_kinfo(HR_THR_KENCAP_PREFIX, 
+        $self->[HR_KFLD_STRSCALAR], $ptr_map, $value+0);
 }
 
 sub ithread_postdup {
-    my ($self,$ptr_map,$old_taddr) = @_;
+    my ($self,$new_table,$ptr_map,$old_taddr) = @_;
     
     my $obj = $self->[HR_KFLD_REFSCALAR];
     my $old_objaddr = $self->[HR_KFLD_STRSCALAR];
@@ -81,15 +80,22 @@ sub ithread_postdup {
         $obj, $old_objaddr, $self->[HR_KFLD_TABLEREF]->scalar_lookup,
         $obj + 0);
     
-    my $old_vaddr = $ptr_map->{
-        $DUPKEY_KENCAP_PFIX . $self->[HR_KFLD_STRSCALAR] };
+    my $old_vaddr = hr_thrutil_get_kinfo(
+        HR_THR_KENCAP_PREFIX, $old_objaddr, $ptr_map);
+    if(!$old_vaddr) {
+        print Dumper($ptr_map);
+        die("Couldn't find old value for key");
+    }
     my $vhash = $ptr_map->{
-        $DUPKEY_LINFO_PFIX . $old_taddr}->[DUPIDX_RLOOKUP]->{$old_vaddr};
-    
+        HR_THR_LINFO_PREFIX . $old_taddr}->reverse->{$old_vaddr};
+    if(!$vhash) {
+        print Dumper($ptr_map->{HR_THR_LINFO_PREFIX.$old_taddr});
+        die("Couldn't find old vhash! ($old_vaddr)");
+    }
     hr_pp_trigger_replace_key(
         $obj, $old_objaddr, $vhash,
         $obj + 0);
-    
+
     $self->[HR_KFLD_STRSCALAR] = $obj + 0;
 }
 
@@ -144,43 +150,36 @@ sub dump {
 use Data::Dumper;
 
 sub DESTROY {
+    return if in_global_destruction;
     my $self = shift;
     my $table = $self->[HR_KFLD_TABLEREF];
     my $obj = $self->[HR_KFLD_REFSCALAR];
     my $obj_s = $self->[HR_KFLD_STRSCALAR];
     
     delete $table->scalar_lookup->{$obj_s};
-    my $stored = delete $table->forward->{$obj_s};
+    my $value = delete $table->forward->{$obj_s};
     
     if($obj) {
-        #log_info("Unregistering triggers on $obj");
         hr_pp_trigger_unregister($obj, $table->scalar_lookup, $obj_s);
-        #hr_pp_trigger_unregister($obj, $table->forward);
-        #log_info("Done");
     }
     
     #log_info("Found stored.. $stored", $stored+0);
     
-    return unless $stored;
-    my $stored_privhash = $table->reverse->{$stored+0};
+    return unless $value;
+    my $vhash = $table->reverse->{$value+0};
     
-    if($stored && $obj) {
-        hr_pp_trigger_unregister($obj, $stored_privhash, $obj_s);
+    if(defined $value && defined $obj && defined $vhash) {
+        hr_pp_trigger_unregister($obj, $vhash, $obj_s);
     }
     
-    #log_info("STRSCALAR=", $self->[HR_KFLD_STRSCALAR]);
-    delete $stored_privhash->{$self->[HR_KFLD_STRSCALAR]};
-    
-    if(!scalar %$stored_privhash) {
-        #log_info("Table empty!");
-        delete $table->reverse->{$stored+0};
-        hr_pp_trigger_unregister($stored, $table->reverse, $obj_s);
+    if(defined $vhash) {
+        delete $vhash->{$self->[HR_KFLD_STRSCALAR]};
+        if(!%$vhash) {
+            #log_info("Table empty!");
+            delete $table->reverse->{$value+0};
+            hr_pp_trigger_unregister($value, $table->reverse, $obj_s);
+        }
     }
-    #else {
-    #    print Dumper($stored_privhash);
-    #    Dump($stored_privhash);
-    #}
-    #log_info("Done");
 }
 
 
@@ -192,6 +191,7 @@ use Scalar::Util qw(weaken refaddr);
 use base qw(Ref::Store);
 use Ref::Store::PP::Magic;
 use Ref::Store::Common qw(:pp_constants);
+use Ref::Store::ThreadUtil;
 
 
 use Log::Fu { level => "debug" };
@@ -231,12 +231,8 @@ sub dref_del_ptr {
 
 sub ithread_store_lookup_info {
     my ($self,$ptr_map) = @_;
-    my @Linfo;
-    @Linfo[DUPIDX_SLOOKUP,DUPIDX_ALOOKUP,DUPIDX_FLOOKUP,DUPIDX_RLOOKUP] =
-        ($self->scalar_lookup,$self->attr_lookup,$self->forward,$self->reverse);
-    $ptr_map->{
-        $DUPKEY_LINFO_PFIX . ($self + 0)
-    } = \@Linfo;
+    my $Linfo = Ref::Store::ThreadUtil::OldLookups->new($self);
+    $ptr_map->{HR_THR_LINFO_PREFIX . ($self + 0) } = $Linfo;
 }
 
 1;

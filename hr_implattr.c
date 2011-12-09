@@ -340,7 +340,7 @@ void HRA_dissoc_a(SV *self, SV *attr, char *t, SV *value)
 
 void HRA_unlink_a(SV *self, SV* attr, char *t)
 {
-    HR_DEBUG("UNLINK_ATTR")
+    HR_DEBUG("UNLINK_ATTR");
     SV *aobj = attr_get(self, attr, t, 0);
     if(!aobj) {
         return;

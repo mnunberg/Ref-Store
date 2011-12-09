@@ -175,6 +175,8 @@ sub single_pass {
 		scalar values %{$Hash->attr_lookup});
 
 	
+	#print Dumper($Hash);
+	
 	timethis(1, sub {
 		@olist = ();
 		@klist = ();
@@ -193,6 +195,9 @@ sub single_pass {
 		scalar values %{$Hash->forward},
 		scalar values %{$Hash->reverse}
 	);
+	if(!$Hash->is_empty) {
+		print Dumper($Hash);
+	}
 	#$Hash->dump();
 	#print Dumper($Hash);
 }

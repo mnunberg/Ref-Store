@@ -22,6 +22,7 @@ use Constant::Generate [qw(
     HR_KFLD_STRSCALAR
     HR_KFLD_REFSCALAR
     HR_KFLD_TABLEREF
+    HR_KFLD_ATTRHASH
     HR_KFLD_AVAILABLE
 )], export => 1;
 

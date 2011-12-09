@@ -43,26 +43,53 @@ get_v_hashref(hrk_encap *ke, SV* value);
 /*We find our information about ourselves here, and place it inside our
  private pointer table*/
 
+static void k_encap_cleanup(SV *ksv, SV *_, HR_Action *action_list);
+static void encap_destroy_hook(SV *encap_obj, SV *ksv, HR_Action *action_list);
+
+static void encap_destroy_hook(SV *encap_obj, SV *ksv, HR_Action *action_list)
+{
+    U32 old_refcount = refcnt_ka_begin(encap_obj);
+    HR_DEBUG("Called!");
+    SV *keyrv;
+    RV_Newtmp(keyrv, ksv);
+    
+    HR_XS_del_action_ext(keyrv, &k_encap_cleanup, NULL,
+                         HR_KEY_TYPE_NULL|HR_KEY_SFLAG_HASHREF_OPAQUE);
+    k_encap_cleanup(ksv, NULL, NULL);
+    refcnt_ka_end(encap_obj, old_refcount);
+    RV_Freetmp(keyrv);
+}
+
 static void k_encap_cleanup(SV *ksv, SV *_, HR_Action *action_list)
 {
     /*Find our forward entry from the stringified object pointer*/
     hrk_encap *ke = keptr_from_sv(ksv);
-    HV *table = ketbl_from_ke(ke);
+    HV *table = ketbl_from_ke(ke);    
+    SV *scalar_lookup, *forward, *reverse;
+    SV *encap_rv = ke->obj_ptr;
+    SV *value = NULL;
+    SV *vhash = NULL;
+    
+    SV **tmp_hashval = NULL;
+    
+    mk_ptr_string(obj_s, ke->obj_paddr);
+    
     if(!table) {
         warn("Is table being destroyed?");
         goto GT_CLEANUP;
     }
     
-    SV *scalar_lookup, *forward, *reverse;
+    ke->obj_paddr = NULL;
+    ke->obj_ptr = NULL;
     
-    //SvREFCNT(table)++;
+    HR_DEBUG("obj_s=%s", obj_s);
+    
     get_hashes(table,
                HR_HKEY_LOOKUP_REVERSE, &reverse,
                HR_HKEY_LOOKUP_FORWARD, &forward,
                HR_HKEY_LOOKUP_SCALAR, &scalar_lookup,
                HR_HKEY_LOOKUP_NULL
     );
-    //SvREFCNT(table)--;
     
     
     if(!(scalar_lookup && forward && reverse)) {
@@ -70,86 +97,55 @@ static void k_encap_cleanup(SV *ksv, SV *_, HR_Action *action_list)
             SvREFCNT(table));
     }
     
-    if( (!ke->obj_ptr) || (!SvROK(ke->obj_ptr))) {
-        HR_DEBUG("Object has been deleted.");
-    } else {
-        HR_DEBUG("Freeing magic triggers on encapsulated object");
-        HR_PL_del_action_container(ke->obj_ptr, scalar_lookup);
-        HR_PL_del_action_container(ke->obj_ptr, forward);
-        HR_DEBUG("Done!");
+    if(encap_rv && SvROK(encap_rv)) {
+        HR_XS_del_action_ext(encap_rv, &encap_destroy_hook,
+                             ksv, HR_KEY_TYPE_PTR|HR_KEY_SFLAG_HASHREF_OPAQUE);
     }
     
-    /*Perform the deletion manually*/
-    mk_ptr_string(obj_s, ke->obj_paddr);
-    HR_DEBUG("obj_s=%s", obj_s);
-    
-    SV **stored = NULL;
-    stored = hv_fetch( REF2HASH(forward), obj_s, strlen(obj_s), 0);
-    if(!stored) {
+    tmp_hashval = hv_fetch( REF2HASH(forward), obj_s, strlen(obj_s), 0 );
+    if(!tmp_hashval) {
         HR_DEBUG("Can't find stored value in forward table");
         goto GT_CLEANUP;
+    } else {
+        value = *tmp_hashval;
     }
     
-    mk_ptr_string(stored_s, SvRV(*stored));
-    mk_ptr_string(ksv_s, SvRV(ksv));
-    SV **stored_reverse;
-    HR_DEBUG("stored_s=%s", stored_s);
-    stored_reverse = hv_fetch( REF2HASH(reverse), stored_s, strlen(stored_s), 0);
     
-    if(stored_reverse) {
-        hv_delete( REF2HASH(*stored_reverse), ksv_s, strlen(ksv_s), G_DISCARD);
+    mk_ptr_string(value_s, SvRV(value));
+    HR_DEBUG("value_s=%s", value_s);
+    tmp_hashval = hv_fetch( REF2HASH(reverse), value_s, strlen(value_s), 0);
+    
+    if(tmp_hashval) {
+        vhash = *tmp_hashval;
+        HR_DEBUG("Deleting vfrom vhash %p", vhash);
         
-        SV* reverse_count = hv_scalar(REF2HASH(*stored_reverse));
+        hv_delete( REF2HASH(vhash), obj_s, strlen(obj_s), G_DISCARD );
         
-        if(!SvTRUE(reverse_count)) {
-            HR_DEBUG("Removing value's reverse hash");
-            hv_delete( REF2HASH(reverse), stored_s, strlen(stored_s), G_DISCARD);
-            HR_PL_del_action_container(*stored, reverse);
+        /*Common value deletion operation*/
+        if(!HvKEYS(REF2HASH(vhash))) {
+            HR_DEBUG("Removing vhash");
+            HR_PL_del_action_container(value, reverse);
+            hv_delete( REF2HASH(reverse), value_s, strlen(value_s), G_DISCARD);
+        } else {
+            HR_DEBUG("Vhash still has %lu keys remaining", HvKEYS(REF2HASH(vhash)));
         }
     } else {
         HR_DEBUG("Can't find anything!");
     }
     
-    hv_delete( REF2HASH(scalar_lookup), obj_s, strlen(obj_s), G_DISCARD);
+    hv_delete( REF2HASH(scalar_lookup), obj_s, strlen(obj_s), G_DISCARD );
     hv_delete( REF2HASH(forward), obj_s, strlen(obj_s), G_DISCARD );
     
     GT_CLEANUP:
-    SvREFCNT_dec(ke->obj_ptr);
-    ke->obj_ptr = NULL;
-    HR_DEBUG("On cleanup, we are refcount=%d", SvREFCNT(ksv));
+    if(encap_rv) {
+        SvREFCNT_dec(encap_rv);
+    }
     HR_DEBUG("Returning...");
 }
 
 void HRXSK_encap_link_value(SV *self, SV *value)
 {
-    HR_DEBUG("LINK VALUE!");
-    hrk_encap *ke = keptr_from_sv(SvRV(self));
-    HR_DEBUG("Have key!");
-    HV *v_hashref = get_v_hashref(ke, value);
-    HR_DEBUG("Have private hashref");
-    if(!v_hashref) {
-        die("Couldn't get reverse entry!");
-    }
-    
-    SV* hashref_ptr = newRV_inc((SV*)v_hashref);
-    
-    HR_Action vdel_actions[] = {
-        {
-            .ktype = HR_KEY_TYPE_PTR,
-            .atype = HR_ACTION_TYPE_DEL_HV,
-            .key   = (char*)SvRV(ke->obj_ptr),
-#ifdef HR_MAKE_PARENT_RV
-            .flags = HR_FLAG_HASHREF_WEAKEN,
-#endif
-            .hashref = hashref_ptr,
-        },
-        HR_ACTION_LIST_TERMINATOR
-    };
-    HR_add_actions_real(ke->obj_ptr, vdel_actions);
-    
-    SvREFCNT_dec(hashref_ptr);
-    HR_DEBUG("Hashref_ptr refcount=%d, hash refcount=%d",
-             SvREFCNT(hashref_ptr), SvREFCNT(v_hashref));
+    /*NOOP*/
 }
 
 void HRXSK_encap_weaken(SV *ksv_ref)
@@ -168,7 +164,7 @@ UV HRXSK_encap_kstring(SV* ksv_ref)
 SV *HRXSK_encap_getencap(SV *ksv_ref)
 {
     hrk_encap *ke = keptr_from_sv(SvRV(ksv_ref));
-    die("Unsupported!");
+    //die("Unsupported!");
     return newSVsv(ke->obj_ptr);
 }
 
@@ -185,11 +181,7 @@ SV* HRXSK_encap_new(char *package, SV* object, SV *table, SV* forward, SV* scala
     keptr->obj_ptr = newRV_inc(SvRV(object));
     keptr->obj_paddr = (char*)SvRV(object);
     
-#ifdef HR_MAKE_PARENT_RV
-    keptr->table = newSVsv(table);
-#else
     keptr->table = SvRV(table);
-#endif
     HR_DEBUG("New blessed class (%s)", package);
     
     mk_ptr_string(key_s, SvRV(object));
@@ -200,18 +192,20 @@ SV* HRXSK_encap_new(char *package, SV* object, SV *table, SV* forward, SV* scala
     sv_rvweaken(self_hval);
     hv_store( REF2HASH(scalar_lookup), key_s, strlen(key_s), self_hval, 0);
     
-    HR_Action encap_actions[] = {
-        HR_DREF_FLDS_ptr_from_hv(SvRV(object), scalar_lookup),
-        HR_ACTION_LIST_TERMINATOR
-    };
-    
+    /*DESTROY equiv*/
     HR_Action key_actions[] = {
         HR_DREF_FLDS_arg_for_cfunc(SvRV(ksv), &k_encap_cleanup),
         HR_ACTION_LIST_TERMINATOR
     };
     
-    HR_add_actions_real(object, encap_actions);
+    HR_Action encap_actions[] = {
+        HR_DREF_FLDS_arg_for_cfunc(SvRV(ksv), &encap_destroy_hook),
+        HR_ACTION_LIST_TERMINATOR
+    };
+    
     HR_add_actions_real(ksv, key_actions);
+    HR_add_actions_real(object, encap_actions);
+    
     HR_DEBUG("Returning key %p", SvRV(ksv));
     return ksv;
 }
@@ -221,12 +215,7 @@ SV* HRXSK_encap_new(char *package, SV* object, SV *table, SV* forward, SV* scala
 static inline HV*
 get_v_hashref(hrk_encap *ke, SV* value)
 {
-    HV *table;
-#ifdef HR_MAKE_PARENT_RV
-    table = (HV*)SvRV(ke->table);
-#else
-    table = (HV*)ke->table;
-#endif
+    HV *table = (HV*)ke->table;
     SV *reverse;
     get_hashes(table,
                HR_HKEY_LOOKUP_REVERSE, &reverse,
@@ -263,17 +252,18 @@ SV* HRXSK_new(char *package, char *key, SV *forward, SV *scalar_lookup)
     int keylen = strlen(key) + 1;
     int bloblen = keylen + sizeof(newkey);
     SV *ksv = mk_blessed_blob(package, bloblen);
+    
     if(!ksv) {
         die("Couldn't create package!");
         return NULL;
-    }    
+    }
+    
     /* blob: [key data] [key string] */
     char *blob = SvPVX(SvRV(ksv));
     char *key_offset = blob + sizeof(newkey);
     
     /*Initialize the blob*/
     Zero(blob, 1, hrk_simple);
-    /*Segfaults on the next line if SvPV_nolen is used instead of SvPVX*/
     Copy(key, key_offset, keylen, char);
     
     SV **scalar_entry = hv_store(REF2HASH(scalar_lookup),
@@ -382,18 +372,19 @@ static inline SV* ukey2ikey(
     return kobj;
 }
 
+
 void HRA_store_sk(SV *self, SV *key, SV *value, ...)
+#define _store_sk_sanity_check \
+    if(!SvROK(value)) { die("Value must be a reference!"); } \
+    if( (items-3) % 2 ) { \
+        die("Odd number of extra arguments. Expected none or hash of options"); \
+    }
 {
     SV *flookup = NULL,  *rlookup = NULL; //Lookup tables
     SV *kobj = NULL, *kstring = NULL; // Key object and string
     SV *vstring = newSVuv(SvUV(value)); //Value refaddr
     SV *hval = newSVsv(value); //reference to store in the forward hash
     SV *existing_ent = value; /* SV** to send/receive options for O_CREAT/O_EXCL*/
-    
-    if(!SvROK(value)) {
-        die("Value must be a reference!");
-    }
-
     SV *vhash; //Value's lookup references
     
     int key_is_ref = SvROK(key);
@@ -401,10 +392,8 @@ void HRA_store_sk(SV *self, SV *key, SV *value, ...)
     int i;
     
     dXSARGS;
-    if( (items-3) % 2) {
-        die("Odd number of extra arguments. Expected none or a hash of options (got %d)",
-            items-3);
-    }
+    
+    _store_sk_sanity_check;
     
     for(i = 3; i < items; i += 2) {
         _chkopt(STRONG_VALUE, i, iopts);
@@ -434,7 +423,7 @@ void HRA_store_sk(SV *self, SV *key, SV *value, ...)
     hv_store_ent(REF2HASH(flookup), kstring, hval, 0);
 
     
-    /*PP: dred_add_ptr*/
+    /*PP: dref_add_ptr*/
     HR_PL_add_action_ptr(hval, rlookup);
     
     /*PP: $ko->link_value(); only valid for encapsulated keys*/

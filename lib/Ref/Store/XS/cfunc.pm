@@ -2,7 +2,7 @@ package Ref::Store::XS::cfunc;
 use strict;
 use warnings;
 use XSLoader;
-our $VERSION = '0.02_0';
+our $VERSION = '0.04_0';
 
 XSLoader::load 'Ref::Store', $VERSION;
 

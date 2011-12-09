@@ -1,6 +1,6 @@
 =head1 NAME
 
-Ref::Store - Implementation details
+Ref::Store::Guts - Implementation details
 
 =head1 INTRODUCTION
 

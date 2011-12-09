@@ -8,6 +8,8 @@
 
 /*#define HR_DEBUG*/
 
+//#define HR_DEBUG
+
 #ifndef HR_DEBUG
 static int _hr_enable_debug = -1;
 #define _hr_can_debug \
@@ -42,6 +44,27 @@ static int _hr_enable_debug = -1;
 #define HR_INLINE static inline
 #endif
 
+
+/*Memory Stuff*/
+
+//#define HR_ALLOC_FROM_ARENA
+
+#define action_get_tail(action_ptr) ( ((char*)action_ptr) +sizeof(HR_Action))
+
+#define Newxz_Action(ptr) \
+    Newxz(ptr, 1, HR_Action)
+
+#define Newxz_Action_tailed(ptr, extra_len) \
+    Newxz(ptr, sizeof(HR_Action)+extra_len, char);
+
+#define Free_Action(ptr) \
+    Safefree(ptr);
+
+#define action_get_size(ptr) \
+    ((ptr->ktype == HR_KEY_TYPE_STR && \
+        (ptr->flags & HR_FLAG_STR_NO_ALLOC == 0) == 0) ? \
+            (sizeof(HR_Action) + strlen(ptr->key) + 1) : \
+                sizeof(HR_Action))
 
 #define HREG_API_INTERNAL
 
@@ -166,6 +189,12 @@ void HR_PL_del_action_ptr(SV *object, SV *hashref, UV addr);
 void HR_PL_del_action_str(SV *object, SV *hashref, char *str);
 void HR_PL_del_action_container(SV *object, SV *hashref);
 void HR_PL_del_action_sv(SV *object, SV *hashref, SV *keysv);
+
+
+/*More extended deletion type..*/
+void HR_XS_del_action_ext(SV *object, void *container,
+						  void *arg, HR_KeyType_t ktype);
+
 
 /*This is mainly for Ref::Destructor, and allows a more versatile, possibly
  slower, but safer specification of actions. Specifically, the target object

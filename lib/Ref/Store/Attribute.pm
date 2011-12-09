@@ -1,39 +1,3 @@
-package Ref::Store::Attribute::TH;
-use strict;
-use warnings;
-use Scalar::Util qw(weaken);
-use Log::Fu;
-use Tie::Hash;
-use base qw(Tie::ExtraHash);
-use Exporter qw(import);
-#TieHash fields
-use Data::Dumper;
-our @EXPORT = qw(TH_HASH TH_ATTR);
-
-use constant {
-    TH_HASH => 0,
-    TH_ATTR => 1,
-};
-
-sub TIEHASH {
-    my ($cls,$attrobj) = @_;
-    bless [{}, $attrobj], $cls;
-}
-
-sub DELETE {
-    my ($hobj,$key) = @_;
-    #log_err("DELETE!");
-    delete $hobj->[TH_HASH]->{$key};
-    if(!scalar %{$hobj->[TH_HASH]}) {
-        delete $hobj->[TH_ATTR];
-    }
-}
-
-sub CLEAR {
-    my $hobj = shift;
-    delete $hobj->[TH_ATTR];
-}
-
 package Ref::Store::Attribute;
 use strict;
 use warnings;
@@ -42,39 +6,41 @@ use Ref::Store::Common;
 use Data::Dumper;
 use Log::Fu;
 
-my $TIEPKG = __PACKAGE__ . "::TH";
-
-#Attr/Key fields
-use constant {
-    HR_KFLD_LOOKUP  => HR_KFLD_AVAILABLE(), #hash for lookups,
-    HR_KFLD_TIEOBJ  => HR_KFLD_AVAILABLE()+1
-};
 
 sub new {
     my ($cls,$scalar,$ref,$table) = @_;
     my $self = [];
-    $#{$self} = HR_KFLD_LOOKUP;
-    my $href = tie (my %h, $TIEPKG, $self);
+    $#{$self} = HR_KFLD_ATTRHASH;
+    
     bless $self, $cls;
     
     @{$self}[HR_KFLD_STRSCALAR, HR_KFLD_REFSCALAR,
-            HR_KFLD_TABLEREF, HR_KFLD_LOOKUP, HR_KFLD_TIEOBJ] =
-        ($scalar, $ref, $table, $href, \%h);
+            HR_KFLD_TABLEREF, HR_KFLD_ATTRHASH] =
+        ($scalar, $ref, $table, {});
     
-    #log_errf("(%d) ATTR[%s %s]",$self,  $scalar, $ref);
     return $self;
 }
 
-sub link_value { }
+sub link_value {
+    my ($self,$value) = @_;
+    
+    $self->[HR_KFLD_TABLEREF]->dref_add_ptr(
+        $value,
+        $self->[HR_KFLD_ATTRHASH],
+        $value + 0
+    );
+}
 
 sub unlink_value {
     my ($self,$value) = @_;
-    return unless delete $self->[HR_KFLD_TIEOBJ]->{$value+0};    
+    
     $self->[HR_KFLD_TABLEREF]->dref_del_ptr(
         $value,
-        $self->[HR_KFLD_LOOKUP]->[0],
-        $value + 0,
+        $self->[HR_KFLD_ATTRHASH],
+        $value + 0
     );
+    
+    delete $self->[HR_KFLD_ATTRHASH]->{$value+0};
 }
 
 sub weaken_encapsulated {
@@ -82,16 +48,16 @@ sub weaken_encapsulated {
 
 sub store_weak {
     my ($self,$k,$v) = @_;
-    weaken($self->[HR_KFLD_LOOKUP]->[0]->{$k} = $v);
+    weaken($self->[HR_KFLD_ATTRHASH]->{$k} = $v);
 }
 
 sub store_strong {
     my ($self,$k,$v) = @_;
-    $self->[HR_KFLD_LOOKUP]->[0]->{$k} = $v;
+    $self->[HR_KFLD_ATTRHASH]->{$k} = $v;
 }
 
 sub get_hash {
-    $_[0]->[HR_KFLD_TIEOBJ];
+    $_[0]->[HR_KFLD_ATTRHASH];
 }
 
 sub kstring {
@@ -101,24 +67,54 @@ sub kstring {
 
 sub dump {
     my ($self,$hrd) = @_;
-    my $h = $self->[HR_KFLD_LOOKUP]->[0];
+    my $h = $self->[HR_KFLD_ATTRHASH];
     foreach my $v (values %$h) {
         $hrd->iprint("V: %s", $hrd->fmt_ptr($v));
     }
 }
 
+use Ref::Store::ThreadUtil;
+sub ithread_predup { }
+sub ithread_postdup {
+    my ($self,$newtable,$ptr_map,$old_taddr) = @_;
+    my $attrhash = $self->[HR_KFLD_ATTRHASH];
+    my @old_keys = keys %$attrhash;
+    foreach my $vaddr (@old_keys) {
+        my $new_v = $ptr_map->{$vaddr};
+        $newtable->dref_del_ptr($new_v, $attrhash, $vaddr);
+        $newtable->dref_add_str($new_v, $attrhash, $new_v + 0);
+        my $was_weak = isweak($attrhash->{$vaddr});
+        $attrhash->{$new_v+0} = $new_v;
+        if($was_weak) { 
+            weaken($attrhash->{$new_v+0});
+        }
+        delete $attrhash->{$vaddr};
+    }
+}
+
 sub DESTROY {
     my $self = shift;
-    #log_errf("%d: BYE", $self+0);
-    my $h = $self->[HR_KFLD_LOOKUP]->[0];
+    my $attrhash = $self->[HR_KFLD_ATTRHASH];
     my $table = $self->[HR_KFLD_TABLEREF];
     return unless $table;
     #log_err("Will iterate over contained values..");
-    foreach my $v (values %$h) {
-        #log_errf("Deleting reverse entry %d { %d }", $v+0, $self+0);
-        delete $table->reverse->{$v+0}->{$self+0};
-        $table->dref_del_ptr($v, $h, $v+0);
+    foreach my $v (values %$attrhash) {
+        next unless defined $v;
+        $table->dref_del_ptr($v, $attrhash, $v+0);
+        
+        my $vhash = $table->reverse->{$v+0};
+        my $vaddr = $v+0;
+        next unless defined $vhash;
+        delete $vhash->{$self+0};
+        
+        if(! %$vhash) {
+            delete $table->reverse->{$vaddr};
+            if(defined $v) {
+                $table->dref_del_ptr($v, $table->reverse, $vaddr);
+            }
+        }
     }
+    
     delete $table->attr_lookup->{ $self->[HR_KFLD_STRSCALAR] };
 }
 
@@ -129,44 +125,22 @@ use base qw(Ref::Store::Attribute);
 use Scalar::Util qw(weaken);
 use Ref::Store::Common;
 use Log::Fu;
+use Ref::Store::ThreadUtil;
+use Data::Dumper;
+use Devel::GlobalDestruction;
+
 
 sub new {
     my ($cls,$astr,$encapsulated,$table) = @_;
     my $self = $cls->SUPER::new($astr, $encapsulated, $table);
-    $self->_init_encapsulated($encapsulated, $astr, $table);
+    $table->dref_add($encapsulated, \&_encap_destroy_hook, $self);
     return $self;
 }
 
-sub _init_encapsulated {
-    my ($self,$encapsulated,$astr,$table) = @_;
-    $table->dref_add_str($encapsulated, $table->attr_lookup, $astr);
-    $table->dref_add_str($encapsulated, $self->[$self->HR_KFLD_LOOKUP], "1");
-}
-
-sub _deinit_encapsulated {
-    my $self = shift;
-    return unless $self->[HR_KFLD_REFSCALAR];
-    my $table = $self->[HR_KFLD_TABLEREF];
-    my $encap = $self->[HR_KFLD_REFSCALAR];
-    my $astr = $self->[HR_KFLD_STRSCALAR];
-    
-    $table->dref_del_ptr($encap, $table->attr_lookup, $astr);
-    $table->dref_del_ptr($encap, $self->[$self->HR_KFLD_LOOKUP], "1");
-}
 
 sub weaken_encapsulated {
     my $self = shift;
     weaken($self->[HR_KFLD_REFSCALAR]);
-}
-
-sub link_value {
-    my ($self,$value) = @_;
-    my $vhash = $self->[HR_KFLD_TABLEREF]->reverse->{$value+0};
-    weaken($vhash);
-    weaken($self);
-    $self->[HR_KFLD_TABLEREF]->dref_add_str(
-        $self->[HR_KFLD_REFSCALAR], $vhash, $self + 0
-    );
 }
 
 sub dump {
@@ -175,37 +149,56 @@ sub dump {
     $self->SUPER::dump($hrd);
 }
 
+sub ithread_predup {
+    my ($self,$table,$ptr_map) = @_;
+    hr_thrutil_store_kinfo(HR_THR_AENCAP_PREFIX, $self->[HR_KFLD_STRSCALAR],
+        $ptr_map, [ $self->[HR_KFLD_REFSCALAR]+0, $self + 0 ] );
+}
+
+sub ithread_postdup {
+    my ($self,$table,$ptr_map,$old_taddr) = @_;
+    my $old = hr_thrutil_get_kinfo(HR_THR_AENCAP_PREFIX, 
+        $self->[HR_KFLD_STRSCALAR], $ptr_map);
+    my ($old_encap_addr,$old_self_addr) = @$old;
+
+    my $new_encap_addr = $self->[HR_KFLD_REFSCALAR]+0;
+
+    $self->[HR_KFLD_STRSCALAR] =~ s/\Q$old_encap_addr\E/$new_encap_addr/gi;
+
+    $table->dref_del_ptr($self->[HR_KFLD_REFSCALAR],
+        $table->attr_lookup, $self->[HR_KFLD_STRSCALAR]);
+
+    my $attrhash = $self->[HR_KFLD_ATTRHASH];
+    foreach my $v (values %$attrhash) {
+        my $vhash = $table->reverse->{$v+0};
+        $table->dref_del_ptr($self->[HR_KFLD_REFSCALAR],
+            $vhash, $old_self_addr);
+        $table->dref_add_str($self->[HR_KFLD_REFSCALAR],
+            $vhash, $self + 0);
+    }
+    $self->SUPER::ithread_postdup($table,$ptr_map,$old_taddr);
+}
+
+use Carp qw(cluck);
+sub _encap_destroy_hook {
+    my ($encapped, $attr) = @_;
+    return if in_global_destruction;
+    $attr->DESTROY();
+}
+
 sub DESTROY {
     my $self = shift;
-    #log_err("DESTROY!");
-    use Data::Dumper;
+    return if in_global_destruction;
     $self->SUPER::DESTROY();
     my $table = $self->[HR_KFLD_TABLEREF];
-    my $astr = $self->[HR_KFLD_STRSCALAR];
-    if($self->[HR_KFLD_REFSCALAR]) {
-        
-        #Remove dref from encapsulated object.
-        $table->dref_del_ptr(
-            $self->[HR_KFLD_REFSCALAR],
-            $table->attr_lookup,
-            $astr,
-        );
-        
-        $table->dref_del_ptr(
-            $self->[HR_KFLD_REFSCALAR],
-            $self->[$self->HR_KFLD_LOOKUP],
-            "1"
-        );
-        
-    }
     
-    while (my ($k,$v) = each %{$self->[$self->HR_KFLD_LOOKUP]->[0] }) {
-        my $vhash = $table->reverse->{$k};
-        delete $vhash->{$self+0};
-        $table->dref_del_ptr($v, $self->get_hash, $v + 0);
-        if(! scalar %$vhash) {
-            delete $table->reverse->{$k};
-            $table->dref_del_ptr($v, $table->reverse, $v + 0);
-        }
+    if($self->[HR_KFLD_REFSCALAR]) {
+        $table->dref_del_ptr(
+            $self->[HR_KFLD_REFSCALAR],
+            \&_encap_destroy_hook,
+            $self
+        );
+        $self->[HR_KFLD_REFSCALAR] = undef;
     }
 }
+1;

@@ -21,7 +21,10 @@ sub unlink_value { }
 
 *new                    = \&HRXSK_encap_new;
 *weaken_encapsulated    = \&HRXSK_encap_weaken;
-*link_value             = \&HRXSK_encap_link_value;
+
+#NOOP:
+#*link_value             = \&HRXSK_encap_link_value;
+
 *kstring                = \&HRXSK_encap_kstring;
 
 *ithread_predup         = \&HRXSK_encap_ithread_predup;

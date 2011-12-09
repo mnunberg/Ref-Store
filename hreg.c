@@ -58,13 +58,10 @@ static inline void action_sanitize_str(HR_Action *action)
 
 static inline void action_sanitize_ptr(HR_Action *action)
 {
-    HR_DEBUG("Called!");
     if( (action->flags & HR_FLAG_SV_REFCNT_DEC) ) {
         HR_DEBUG("Decreasing reference count on SV=%p", action->key);
         SvREFCNT_dec((SV*)action->key);
         action->key = NULL;
-    } else {
-        HR_DEBUG("Flags=%d", action->flags);
     }
 }
 
@@ -126,6 +123,7 @@ static inline HR_Action* action_find_similar(
                 break;
         }
     }
+    HR_DEBUG("Couldn't find match");
     return NULL;
 }
 
@@ -150,7 +148,8 @@ HR_add_action(HR_Action *action_list,
         return;
     }
     
-    Newxz(cur, 1, HR_Action);
+    
+    Newxz_Action(cur);
     HR_DEBUG("cur is now %p", cur);
     last->next = cur;
     
@@ -201,7 +200,7 @@ HR_free_action(HR_Action *action)
     HR_Action *ret = action->next;
     action_sanitize(action);
     HR_DEBUG("Free: %p", action);
-    Safefree(action);
+    Free_Action(action);
     return ret;
 }
 
@@ -230,14 +229,14 @@ HR_del_action(HR_Action *action_list, SV *hashref, void *key, HR_KeyType_t ktype
         assert(last == cur == action_list);
         action_sanitize(cur);
         Copy(nextp, last, 1, HR_Action);
-        Safefree(nextp);
+        Free_Action(nextp);
         return HR_ACTION_DELETED;
     } else {
         HR_DEBUG("Delete %p hashref=%p", cur, cur->hashref);
         action_sanitize(cur);
         
         last->next = cur->next;
-        Safefree(cur);
+        Free_Action(cur);
     }
     return HR_ACTION_DELETED;
 }
@@ -277,7 +276,7 @@ HR_trigger_and_free_actions(HR_Action *action_list, SV *object)
         last = action_list;
         action_list = action_list->next;
         HR_DEBUG("Free %p", last);
-        Safefree(last);
+        Free_Action(last);
     }
     HR_DEBUG("Done");
 }
@@ -354,6 +353,11 @@ trigger_and_free_action(HR_Action *action_list, SV *object)
                 case HR_ACTION_TYPE_DEL_HV:
                 case HR_ACTION_TYPE_DEL_AV: {
                     
+                    if(SvREADONLY(container)) {
+                        warn("Container is read-only. Skipping deletion");
+                        goto GT_ACTION_FREE;
+                        break;
+                    }
                     /*Since this function can recurse, we need to ensure our
                      collection remains valid*/
                     HR_DEBUG("(KEEPALIVE): Refcount for container=%p is now %d", container, SvREFCNT(container));

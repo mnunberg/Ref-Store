@@ -39,7 +39,7 @@ HR_INLINE int
 hr_duphook(pTHX_ MAGIC *mg, CLONE_PARAMS *param)
 {
 	HR_DEBUG("Initializing new empty action list");
-	Newxz(mg->mg_ptr, 1, HR_Action);
+	Newxz_Action(mg->mg_ptr);
 }
 
 HR_INLINE MAGIC*
@@ -88,7 +88,7 @@ get_our_magic(SV* objref, int create)
 	
 	GT_NEW_MAGIC:
 	HR_DEBUG("Creating new magic for %p", target);
-    Newxz(action_list, 1, HR_Action);
+	Newxz_Action(action_list);
 	mg = sv_magicext(target, target, PERL_MAGIC_ext, &vtbl,
 					 (const char*)action_list, 0);
 	
@@ -207,6 +207,13 @@ gen_del_fn(str, char*, HR_KEY_TYPE_STR);
 gen_del_fn(sv, SV*, HR_KEY_STYPE_PTR_RV);
 
 #undef gen_del_fn
+
+void HR_XS_del_action_ext(
+	SV *object, void *container, void *arg, HR_KeyType_t ktype)
+{
+	pl_del_action_common(object, container, arg, ktype);
+}
+
 
 void HR_PL_del_action_container(SV *object, SV *hashref)
 {

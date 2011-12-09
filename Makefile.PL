@@ -20,12 +20,14 @@ WriteMakefile(
       : ()),
     PL_FILES            => {},
     PREREQ_PM => {
+        'Dir::Self'         => 0,
         'Test::More' 		=> 0,
-        'Variable::Magic' 	=> 0.43,
+        'Variable::Magic' 	=> 0.47,
         'Task::Weaken'  	=> 0,
-		'Module::Stubber' 	=> 0,
+		'Module::Stubber' 	=> 0.02,
 		'Class::XSAccessor' => 0,
-		'Constant::Generate'=> 0.03
+		'Constant::Generate'=> 0.03,
+        'Devel::GlobalDestruction' => 0.04
     },
 #    LIBS                => ['-lprofiler'],
     OBJECT             => join(".o ", @modules) . ".o Store.o",

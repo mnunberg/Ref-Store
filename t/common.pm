@@ -1,7 +1,6 @@
 package _ObjBase;
 use strict;
 use warnings;
-my $can_use_threads = eval 'use threads; 1';
 
 sub new {
     my ($cls,%opts) = @_;
@@ -24,6 +23,7 @@ sub reset_counter {
 
 
 package HRTests;
+my $can_use_threads = eval 'use threads; 1';
 use Ref::Store::Common;
 use Scalar::Util qw(weaken isweak);
 use Test::More;
@@ -223,6 +223,7 @@ sub test_oexcl {
     my $v = \time();
     $h->store("foo", $v);
     my $v2 = \time();
+    local $SIG{__DIE__} = 'DEFAULT';
     eval {
         $h->store("foo", $v2);
     };
@@ -318,6 +319,72 @@ sub test_threads {
     diag("Returning..");
 }
 
+
+sub just_wondering {
+    my $rs = $Impl->new();
+    
+    $rs->register_kt('rfds');
+    $rs->register_kt('wfds');
+    
+    pipe my($placeholder_rfd,$placeholder_wfd);
+    my $orig_fd = fileno($placeholder_rfd);
+    
+    for (0..10) {
+        pipe my($rfd,$wfd);
+        $rs->store_a(1, 'rfds', $rfd);
+        $rs->store_a(1, 'wfds', $wfd);
+        $rs->store($rfd, $wfd, StrongKey => 1);
+    }
+    foreach my $wfd ($rs->fetch_a(1, 'wfds')) {
+        diag "Printing to $wfd";
+        syswrite($wfd, "$wfd\n");
+    }
+    foreach my $rfd ($rs->fetch_a(1, 'rfds')) {
+        my $input = sysread($rfd, my $buf, 4096);
+        diag "Got input $buf";
+        $rs->purgeby($rfd);
+    }
+    #diag "Done!";
+    ok($rs->is_empty(), "Cool file deletion crap..");
+    
+    close($placeholder_rfd);
+    close($placeholder_wfd);
+    
+    pipe my ($nrfd,$nwfd);
+    
+    is(fileno($nrfd), $orig_fd, "Got same filenumber (no FD leak)");
+    #$rs->dump();
+}
+
+sub retention {
+    my $rs = $Impl->new();
+    $rs->register_kt('some_attr');
+    {
+        my $v = "Hello";
+        $rs->store('some_key', \$v, StrongValue => 1);
+        my $v2 = "World";
+        $rs->store_a(1, 'some_attr', \$v2, StrongValue => 1);
+    }
+    ok($rs->fetch('some_key'), "StrongValue - String Keys");
+    ok($rs->fetch_a(1, 'some_attr'), "Strong Value - String Attributes");
+    
+    $rs->purgeby('some_key');
+    $rs->purgeby_a(1, 'some_attr');
+    
+    my $ev1 = [];
+    my $ev2 = {};
+    
+    {
+        my $k1 = [];
+        my $k2 = [];
+        $rs->store($k1, $ev1, StrongKey => 1);
+        $rs->store_a($k2, 'some_attr', $ev2, StrongAttr => 1);
+    }
+    ok($rs->vexists($ev1) && $rs->vexists($ev2), "key persistence");
+    #$rs->dump();
+    
+}
+
 sub test_all {
     eval "require $Impl";
     test_scalar_key();
@@ -328,6 +395,21 @@ sub test_all {
     test_object_attr();
     test_chained_basic();
     test_oexcl();
+    if($Impl =~ /XS/) {
+        test_threads();
+        diag 'thread tests done';
+    } else {
+        diag "Threads are only supported by XS backend";
+    }
+    
+    just_wondering();
+    
+    #if($Impl !~ /Sweep/) {
+    #    done_testing();
+    #} else {
+    #    diag "Skipping thread tests for sweeping implementation";
+    #}
+    retention();
     done_testing();
 }
 1;
