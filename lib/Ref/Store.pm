@@ -11,7 +11,7 @@ use Scalar::Util qw(weaken isweak);
 use Devel::GlobalDestruction;
 
 
-our $VERSION = '0.04_0';
+our $VERSION = '0.05_0';
 use Log::Fu { level => "debug" };
 use Class::XSAccessor {
 	constructor => '_real_new',

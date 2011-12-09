@@ -135,17 +135,25 @@ HR_add_action(HR_Action *action_list,
     HR_Action *cur = NULL, *last = action_list;
     HR_DEBUG("hashref=%p, action_list=%p", new_action->hashref, action_list);
     
+    int search_flags = 0;
+    
     if(action_list->ktype == HR_KEY_TYPE_NULL) {
         HR_DEBUG("List empty, creating new");
         cur = action_list;
         goto GT_INSERT_ENTRY;
-    } else if( (cur = action_find_similar(
-            action_list, new_action->hashref,
-            new_action->key, new_action->ktype,
-            &last)) ) {
+    } else {
         
-        HR_DEBUG("Existing action found for %p", cur->hashref);
-        return;
+        if(new_action->atype == HR_ACTION_TYPE_CALL_CFUNC) {
+            search_flags = HR_KEY_SFLAG_HASHREF_OPAQUE;
+        }
+        if( (cur = action_find_similar(
+                action_list, new_action->hashref,
+                new_action->key, new_action->ktype|search_flags, &last)) ) {
+            
+            HR_DEBUG("Existing action found for %p", cur->hashref);
+            return;
+        
+        }
     }
     
     

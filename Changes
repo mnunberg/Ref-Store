@@ -3,3 +3,4 @@ Revision history for Ref-Store
 0.01    Date/time
         First version, released on an unsuspecting world.
 
+0.05_0  5.8 compat, XS thread support, more tests

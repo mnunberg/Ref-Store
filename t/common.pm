@@ -208,14 +208,8 @@ sub test_chained_basic {
         $hash->store_a("1", ATTR_BAR, $third_obj);
     }
     $Data::Dumper::Useqq = 1;
-    #print Dumper($hash);
-    #print $hash->dump();
     undef $nested_obj;
     ok($hash->is_empty(), "Nested deletion OK");
-    #$hash->dump();
-    #undef $second_obj;
-    #undef $third_obj;
-    #print Dumper($hash);
 }
 
 sub test_oexcl {
