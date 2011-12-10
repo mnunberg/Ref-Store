@@ -18,6 +18,20 @@ use Module::Stubber
     'Log::Fu' => [ { level => "debug" } ],
     will_use => { map { $_ => \&carp } @logfuncs };
 
+#Keep these in sync with hrdefs.h HR_HKEY_LOOKUP_
+use Constant::Generate [qw(
+    HR_TIDX_NULL
+    HR_TIDX_SLOOKUP
+    HR_TIDX_FLOOKUP
+    HR_TIDX_RLOOKUP
+    HR_TIDX_KEYTYPES
+    HR_TIDX_ALOOKUP
+    HR_TIDX_KEYFUNC
+    HR_TIDX_UNKEYFUNC
+    HR_TIDX_FLAGS
+    HR_TIDX_PRIVDATA
+)], export => 1;
+
 use Constant::Generate [qw(
     HR_KFLD_STRSCALAR
     HR_KFLD_REFSCALAR

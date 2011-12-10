@@ -21,10 +21,6 @@ trigger_and_free_action(HR_Action *action_list, SV *object);
 static inline void action_sanitize_str(HR_Action *action);
 static inline void action_sanitize_ptr(HR_Action *action);
 
-#define action_clear(actionp) \
-    actionp->flags = actionp->ktype = actionp->key = actionp->hashref = 0;
-
-
 #define action_sanitize(actionp) \
     ((actionp->ktype == HR_KEY_TYPE_STR) \
             ? action_sanitize_str(actionp) : \
@@ -136,11 +132,12 @@ HR_add_action(HR_Action *action_list,
     HR_DEBUG("hashref=%p, action_list=%p", new_action->hashref, action_list);
     
     int search_flags = 0;
+    int tail_len;
     
     if(action_list->ktype == HR_KEY_TYPE_NULL) {
         HR_DEBUG("List empty, creating new");
         cur = action_list;
-        goto GT_INSERT_ENTRY;
+        //goto GT_INSERT_ENTRY;
     } else {
         
         if(new_action->atype == HR_ACTION_TYPE_CALL_CFUNC) {
@@ -156,12 +153,18 @@ HR_add_action(HR_Action *action_list,
         }
     }
     
+    //Newxz_Action(cur);
+    //HR_DEBUG("cur is now %p", cur);
+    //last->next = cur;
+    //
+    //GT_INSERT_ENTRY:
+    if(!cur) {
+        Newxz_Action(cur);
+    }
+    if(last) {
+        last->next = cur;
+    }
     
-    Newxz_Action(cur);
-    HR_DEBUG("cur is now %p", cur);
-    last->next = cur;
-    
-    GT_INSERT_ENTRY:
     HR_DEBUG("cur=%p", cur);
     Copy(new_action, cur, 1, HR_Action);
     cur->next = NULL;
@@ -372,7 +375,7 @@ trigger_and_free_action(HR_Action *action_list, SV *object)
                     old_refcount = refcnt_ka_begin(container);
                     
                     if(action_list->atype == HR_ACTION_TYPE_DEL_HV) {
-                        if(SvTRUE(hv_scalar((HV*)container))) {
+                        if( HvKEYS((HV*)container) ) {
                             if( (action_list->flags & HR_FLAG_PTR_NO_STRINGIFY) ) {
                                 HR_DEBUG("Deleting packed pointer %p (HV=%p)",
                                          action_list->key, container);

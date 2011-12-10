@@ -2,7 +2,7 @@ package Ref::Store::XS::cfunc;
 use strict;
 use warnings;
 use XSLoader;
-our $VERSION = '0.05_0';
+our $VERSION = '0.08_0';
 
 XSLoader::load 'Ref::Store', $VERSION;
 
@@ -15,6 +15,7 @@ our @EXPORT = qw(
     HR_PL_del_action_container
     HR_PL_del_action_str
     HR_PL_del_action_ptr
+    HR_PL_add_action_ext
     
     HRXSK_new
     HRXSK_kstring
@@ -28,7 +29,7 @@ our @EXPORT = qw(
     HRXSK_encap_ithread_predup
     HRXSK_encap_ithread_postdup
     
-    
+    HRA_table_init
 	HRA_store_sk
 	HRA_fetch_sk
     

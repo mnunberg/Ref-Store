@@ -8,7 +8,7 @@
 
 /*#define HR_DEBUG*/
 
-//#define HR_DEBUG
+#define HR_DEBUG
 
 #ifndef HR_DEBUG
 static int _hr_enable_debug = -1;
@@ -29,9 +29,32 @@ static int _hr_enable_debug = -1;
 
 #define _mg_action_list(mg) (HR_Action*)mg->mg_ptr
 
+static inline void
+_mk_ptr_string(char *str, unsigned long long value)
+{
+/*Pirated from:
+ http://code.google.com/p/stringencoders/
+*/
+    char* wstr=str;
+    char aux;
+    // Conversion. Number is reversed.
+    
+    do *wstr++ = (char)(48 + (value % 10)); while (value /= 10);
+    *wstr='\0';
+    
+    // Reverse string
+    wstr--;
+    while (wstr > str)
+        aux = *wstr, *wstr-- = *str, *str++ = aux;
+}
+
+//#define mk_ptr_string(vname, ptr) \
+//    char vname[128] = { '\0' }; \
+//    sprintf(vname, "%lu", ptr);
+
 #define mk_ptr_string(vname, ptr) \
-    char vname[128] = { '\0' }; \
-    sprintf(vname, "%lu", ptr);
+    char vname[128]; \
+    _mk_ptr_string(vname, (unsigned long long)ptr);
 
 #ifdef __GNUC__
 #define inline __inline__
@@ -44,27 +67,58 @@ static int _hr_enable_debug = -1;
 #define HR_INLINE static inline
 #endif
 
+#define HR_TABLE_ARRAY
 
 /*Memory Stuff*/
 
-//#define HR_ALLOC_FROM_ARENA
+//#define HR_PERL_MALLOC
 
-#define action_get_tail(action_ptr) ( ((char*)action_ptr) +sizeof(HR_Action))
+#ifdef HR_PERL_MALLOC
+#warning "Using Perl_malloc"
+#undef Perl_malloc
+#undef Perl_mfree
 
 #define Newxz_Action(ptr) \
-    Newxz(ptr, 1, HR_Action)
+    ptr = Perl_malloc(sizeof(HR_Action)); \
+    Zero(ptr, 1, HR_Action);
 
-#define Newxz_Action_tailed(ptr, extra_len) \
-    Newxz(ptr, sizeof(HR_Action)+extra_len, char);
+#define Newxz_Action_len(ptr, extra_len) \
+    ptr = Perl_malloc(sizeof(HR_Action) + extra_len); \
+    Zero(ptr, 1, HR_Action);
+
+#define Resize_Action_tail(ptr, tail_len) \
+    ptr = Perl_realloc(ptr, sizeof(HR_Action)+tail_len);
+
+#define Free_Action(ptr) \
+    Perl_mfree(ptr);
+
+#else /*!HR_PERL_MALLOC*/
+       
+#define Newxz_Action(ptr) \
+    Newxz(ptr, 1, HR_Action)
 
 #define Free_Action(ptr) \
     Safefree(ptr);
 
-#define action_get_size(ptr) \
-    ((ptr->ktype == HR_KEY_TYPE_STR && \
-        (ptr->flags & HR_FLAG_STR_NO_ALLOC == 0) == 0) ? \
-            (sizeof(HR_Action) + strlen(ptr->key) + 1) : \
-                sizeof(HR_Action))
+#endif
+
+/*action tail functions*/
+
+#define action_is_tailed_nocheck(actionp) \
+    ((actionp->flags & HR_FLAG_STR_NO_ALLOC) == 0)
+
+#define action_is_tailed(actionp) \
+    (actionp->ktype == HR_KEY_TYPE_STR && action_is_tailed_nocheck(actionp))
+
+#define action_keystr(actionp) \
+    (action_is_tailed_nocheck(actionp)) ? \
+        (char*)(((char*)actionp)+sizeof(HR_Action)) : \
+        actionp->key
+
+#define action_keylen(actionp) \
+    (action_is_tailed_nocheck(actionp)) ? \
+        (size_t)(actionp->key) : \
+        strlen(actionp->key)
 
 #define HREG_API_INTERNAL
 
@@ -97,9 +151,9 @@ typedef enum {
 } HR_KeyType_t;
 
 typedef enum {
-    HR_ACTION_NOT_FOUND,
-    HR_ACTION_DELETED,
-    HR_ACTION_EMPTY
+    HR_ACTION_NOT_FOUND,    /*Action was not found in the list*/
+    HR_ACTION_DELETED,      /*Deletion OK*/
+    HR_ACTION_EMPTY         /*No more actions left in the table. Hint for unmagic*/
 } HR_DeletionStatus_t;
 
 
@@ -130,6 +184,13 @@ HR_Action {
     SV          *hashref;   /*Container*/
     unsigned int flags : 5; /*Flags*/
 };
+
+/*This will clear an action's data fields, while keeping the next pointer
+ for the linked list*/
+
+#define action_clear(actionp) \
+    Zero(((char**)actionp)+1, sizeof(HR_Action)-sizeof(HR_Action*), char);
+
 
 #define HR_ACTION_LIST_TERMINATOR \
 { NULL, NULL, HR_KEY_TYPE_NULL, HR_ACTION_TYPE_NULL, 0, 0 }
@@ -201,7 +262,7 @@ void HR_XS_del_action_ext(SV *object, void *container,
  will always be a reference (though it can be weakened)
 */
 
-void HR_PL_add_action_ext_safe(
+void HR_PL_add_action_ext(
     SV *objref, UV key, unsigned int atype, unsigned int ktype, SV *hashref,
     unsigned int flags);
 
@@ -232,6 +293,8 @@ void HRXSATTR_ithread_predup(SV *self, SV *table, HV *ptr_map);
 void HRXSATTR_ithread_postdup(SV *newself, SV *newtable, HV *ptr_map);
 
 /*H::R API*/
+void HRA_table_init(SV *self);
+
 void HRA_store_sk(SV *hr, SV *ukey, SV *value, ...);
 SV* HRA_fetch_sk(SV *hr, SV *ukey); /*we manipulate perl's stack in this one*/
 

@@ -61,6 +61,8 @@ use Log::Fu;
 #These two lines completely override the perl store/fetch code and utilize
 #pure C! - double the speed
 
+*table_init         = \&HRA_table_init;
+
 *store = *store_sk  = \&HRA_store_sk;
 *fetch = *fetch_sk  = \&HRA_fetch_sk;
 

@@ -2,33 +2,36 @@ package Ref::Store;
 use strict;
 use warnings;
 
-use Scalar::Util qw(weaken);
+our $VERSION = '0.08_0';
 
+use Scalar::Util qw(weaken);
+use Carp::Heavy;
 use Ref::Store::Common;
 use Ref::Store::Attribute;
 use Ref::Store::Dumper;
 use Scalar::Util qw(weaken isweak);
 use Devel::GlobalDestruction;
-
-
-our $VERSION = '0.05_0';
-use Log::Fu { level => "debug" };
-use Class::XSAccessor {
-	constructor => '_real_new',
-	accessors => [qw(
-		scalar_lookup
-		attr_lookup
-		forward
-		reverse
-		keyfunc
-		unkeyfunc
-		impl_data
-		keytypes
-		flags
-	)]
-};
-
 use Data::Dumper;
+use Log::Fu { level => "debug" };
+use Carp qw(confess cluck);
+
+
+use Class::XSAccessor::Array
+	constructor => 'real_new',
+	accessors	=> {
+		scalar_lookup 	=> HR_TIDX_SLOOKUP,
+		reverse			=> HR_TIDX_RLOOKUP,
+		forward			=> HR_TIDX_FLOOKUP,
+		attr_lookup		=> HR_TIDX_ALOOKUP,
+		keytypes		=> HR_TIDX_KEYTYPES,
+		
+		keyfunc			=> HR_TIDX_KEYFUNC,
+		unkeyfunc		=> HR_TIDX_UNKEYFUNC,
+		
+		priv			=> HR_TIDX_PRIVDATA,
+		flags			=> HR_TIDX_FLAGS
+	};
+
 use base qw(Ref::Store::Feature::KeyTyped);
 
 my %Tables; #Global hash of tables
@@ -72,11 +75,24 @@ sub new {
 	
 	$options{keyfunc} ||= \&_keyfunc_defl;
 	$options{unkeyfunc} ||= sub { $_[0] };
-	$options{attr_lookup} = {};
-	$options{reverse} = {};
-	$options{forward} = {};
-	$options{scalar_lookup} = {};
-	my $self = $cls->_real_new(%options);
+	
+	my $self = [];
+	bless $self, $cls;
+	
+	foreach my $lidx (HR_TIDX_FLOOKUP,
+					  HR_TIDX_RLOOKUP,
+					  HR_TIDX_SLOOKUP,
+					  HR_TIDX_ALOOKUP,
+					  HR_TIDX_KEYTYPES) {
+		$self->[$lidx] = {};
+	}
+	
+	$self->[HR_TIDX_KEYFUNC] = $options{keyfunc};
+	$self->[HR_TIDX_UNKEYFUNC] = $options{unkeyfunc};
+	
+	if($self->can('table_init')) {
+		$self->table_init();
+	}
 	
 	weaken($Tables{$self+0} = $self);
 	return $self;
@@ -387,6 +403,18 @@ sub store_a {
     return $value;
 }
 
+#sub tag {
+#	my ($self,$tag,$value, %options) = @_;
+#	$self->store_a(1, $tag, $value, %options);
+#}
+#
+#sub untag {
+#	my ($self,$tag,$value,%options) = @_;
+#	$self->dissoc_a(1, $tag, $value);
+#}
+
+
+
 sub fetch_a {
     my ($self,$attr,$t) = @_;
     my $aobj = $self->attr_get($attr, $t);
@@ -515,7 +543,6 @@ sub ithread_predup {
 	}
 }
 
-use Carp qw(cluck);
 sub ithread_postdup {
 	my ($self,$old_table) = @_;
 	
@@ -570,7 +597,6 @@ sub ithread_postdup {
 	}
 }
 
-use Carp qw(confess);
 $SIG{__DIE__}=\&confess;
 sub CLONE_SKIP {
 	my $pkg = shift;
@@ -1082,6 +1108,8 @@ Creates a new Ref::Store object. It takes a hash of options:
 
 =item keyfunc
 
+I<only in PP backend>
+
 This function is responsible for converting a key to something 'unique'. The
 default implementation checks to see whether the key is a reference, and if so
 uses its address, otherwise it uses the stringified value. It takes the user key
@@ -1136,9 +1164,13 @@ reference.
 
 =head2 THREAD SAFETY
 
-C<Ref::Store> is tested as being threadsafe in both the XS and PP backends.
+C<Ref::Store> is tested as being threadsafe the XS backend.
 
-Thread safety was quite difficult since reference objects are keyed by their
+Due to tricky limitations and ninja-style coding necessary to properly
+facilitate threads, thread-safety is not supported in the PP backend,
+though YMMV (on my machine, PP thread tests segfault).
+
+Thread safety is quite difficult since reference objects are keyed by their
 memory addresses, which change as those objects are duplicated.
 
 =head1 AUTHOR

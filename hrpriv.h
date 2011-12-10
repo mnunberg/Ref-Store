@@ -7,6 +7,7 @@
 #include <stdarg.h>
 
 #define REF2HASH(ref) ((HV*)(SvRV(ref)))
+#define REF2ARRAY(ref) (AV*)(SvRV(ref))
 
 #define RV_Newtmp(vname, referrent) \
     vname = newRV_noinc((referrent));
@@ -16,8 +17,29 @@
     SvROK_off(rv); \
     SvREFCNT_dec(rv);
 
+#define stash_from_cache_nocheck(darry, stashtype) \
+    ((HV*)SvRV((*(av_fetch(REF2ARRAY(darry), stashtype, 0)))))
 
 
+typedef char* HR_BlessParams[2];
+#define blessparam_init(bparam) bparam[0] = NULL
+#define blessparam_setstash(bparam, stash) bparam[1] = stash
+#define blessparam2chrp(bparam) (char*)(bparam)
+
+
+HR_INLINE HV*
+stash_from_cache_nocheck_S(SV *aref, int stashtype)
+{
+    HV *ret;
+    SV **elem;
+    
+    elem = av_fetch(REF2ARRAY(aref), stashtype, 0);
+    if(!elem) {
+        die("Couldn't find stash!");
+    }
+    ret = (HV*)SvRV(*elem);
+    return ret;
+}
 
 enum {
     VHASH_NO_CREATE = 0,
@@ -73,12 +95,22 @@ refcnt_ka_end(SV *sv, U32 old_refcount)
     }
 }
 
+#ifndef HR_TABLE_ARRAY
+typedef HV* HR_Table_t;
+#else
+typedef AV* HR_Table_t;
+#warning "Using Array!"
+#endif
+
+#define REF2TABLE(tbl) \
+    ((HR_Table_t)SvRV(tbl))
 
 HR_INLINE void
-get_hashes(HV *table, ...)
+get_hashes(HR_Table_t table, ...)
 {
     va_list ap;
     va_start(ap, table);
+    SV **result;
     
     while(1) {
         int ltype = (int)va_arg(ap, int);
@@ -86,12 +118,14 @@ get_hashes(HV *table, ...)
             break;
         }
         SV **hashptr = (SV**)va_arg(ap, SV**);
-        
+#ifdef HR_TABLE_ARRAY
+        result = av_fetch(table, ltype, 0);
+#else
         HSpec *kspec = (HSpec*)HR_LookupKeys[ltype-1];
         char *hkey = (*kspec)[0];
         int klen = (int)((*kspec)[1]);
-        SV **result = hv_fetch(table, hkey, klen, 0);
-        
+        result = hv_fetch(table, hkey, klen, 0);
+#endif
         if(!result) {
             *hashptr = NULL;
         } else {
@@ -137,15 +171,27 @@ get_vhash_from_rlookup(SV *rlookup, SV *vaddr, int create)
     return href;
 }
 
+HR_INLINE HV*
+stash_from_pkgparam(char *arg)
+{
+    if(! (*arg) ) {
+        HR_DEBUG("Special stash stored!");
+        return (HV*)(((char**)arg)[1]);
+    } else {
+        HR_DEBUG("Just a normal string :(");
+        return gv_stashpv(arg, 0);
+    }
+}
+
 HR_INLINE SV*
 mk_blessed_blob(char *pkg, int size)
 {
     HR_DEBUG("New blob requested with size=%d", size);
+    HV *stash = stash_from_pkgparam(pkg);
     SV *referrant = newSV(size);
     HR_DEBUG("Allocated block=%p", SvPVX(referrant));
-    HV *stash = gv_stashpv(pkg, 0);
     if(!stash) {
-        die("Can't get stash for %pkg");
+        die("Can't get stash!");
         SvREFCNT_dec(referrant);
         return NULL;
     }

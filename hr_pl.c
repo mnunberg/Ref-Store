@@ -262,7 +262,7 @@ HR_PL_add_action_ptr(SV* objref, SV *hashref)
 	HR_add_actions_real(objref, actions);
 }
 
-void HR_PL_add_action_ext_safe(
+void HR_PL_add_action_ext(
 	SV *objref,
 	UV key,
 	unsigned int atype,

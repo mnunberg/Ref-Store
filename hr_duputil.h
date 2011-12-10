@@ -44,7 +44,7 @@ typedef struct {
     sprintf(vname, "%s%p", HR_DUPKEY_VHASH, vaddr);
 
 static inline void
-hr_dup_store_old_lookups(HV *ptr_map, HV *parent)
+hr_dup_store_old_lookups(HV *ptr_map, HR_Table_t parent)
 {
 
     mk_old_lookup_key(hkey, parent);
@@ -120,7 +120,7 @@ hr_dup_get_vinfo(HV *ptr_map, void *vaddr, int create)
         }
     } else {
         assert(stored && *stored);
-        if(SvTYPE(*stored) == NULL) {
+        if(SvTYPE(*stored) == SVt_NULL) {
             SvUPGRADE(*stored, SVt_PV);
             SvGROW( (*stored), sizeof(HR_Dup_Vinfo));
             ((HR_Dup_Vinfo*)SvPVX( (*stored)) )->vhash = NULL;
@@ -137,7 +137,7 @@ hr_dup_newsv_for_oldsv(HV *ptr_map, void *oldptr, int copy)
     SV **ret = hv_fetch(ptr_map, old_s, strlen(old_s), 0);
     if(!ret) {
         HR_DEBUG("Couldn't fetch!");
-        sv_dump(ptr_map);
+        sv_dump((SV*)ptr_map);
     }
     assert(ret);
     if(copy) {

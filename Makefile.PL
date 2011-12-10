@@ -29,7 +29,7 @@ WriteMakefile(
 		'Constant::Generate'=> 0.03,
         'Devel::GlobalDestruction' => 0.04
     },
-#    LIBS                => ['-lprofiler'],
+    LIBS                => ['-lprofiler'],
     OBJECT             => join(".o ", @modules) . ".o Store.o",
     dist                => { COMPRESS => 'gzip -9f', SUFFIX => 'gz', },
     clean               => { FILES => 'Ref-Store-* '. $GENERATED_FILES },

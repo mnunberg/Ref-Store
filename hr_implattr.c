@@ -28,11 +28,7 @@ typedef struct {
 
 #define KT_DELIM "#"
 
-#ifdef HR_MAKE_PARENT_RV
-#define attr_parent_tbl(attr) SvRV((attr->table))
-#else
-#define attr_parent_tbl(attr) (attr->table)
-#endif
+#define attr_parent_tbl(attr) (HR_Table_t)(attr->table)
 
 #define attr_from_sv(sv) (hrattr_simple*)(SvPVX(sv))
 /*Declare a function which will be our trigger and proxy deletion/checking
@@ -129,16 +125,21 @@ attr_get(SV *self, SV *attr, char *t, int options)
     SV **kt_ent;
     SV *aobj = NULL;
     SV **a_ent;
+    SV *my_stashcache_ref;
+    
+    HR_BlessParams stash_params;
     
     int attrlen = 0;
     int on_heap = 0;
     
-    get_hashes(REF2HASH(self),
+    get_hashes(REF2TABLE(self),
                HR_HKEY_LOOKUP_ATTR, &attr_lookup,
                HR_HKEY_LOOKUP_KT, &kt_lookup,
+               HR_HKEY_LOOKUP_PRIVDATA, &my_stashcache_ref,
                HR_HKEY_LOOKUP_NULL
             );
     
+    blessparam_init(stash_params);
     
     if(! (kt_ent = hv_fetch(REF2HASH(kt_lookup), t, strlen(t), 0))) {
         die("Couldn't determine keytype '%s'", t);
@@ -174,12 +175,18 @@ attr_get(SV *self, SV *attr, char *t, int options)
             HR_DEBUG("Could not locate attribute and O_CREAT not specified");
             goto GT_RET;
         } else if(SvROK(attr)) {
-            aobj = attr_encap_new(HR_PKG_ATTR_ENCAP, attr_fullstr, attr, self);
+            blessparam_setstash(stash_params,
+                stash_from_cache_nocheck(my_stashcache_ref, HR_STASH_ATTR_ENCAP));
+            
+            aobj = attr_encap_new(blessparam2chrp(stash_params),
+                                  attr_fullstr, attr, self);
             if( (options & STORE_OPT_STRONG_KEY) == 0) {
                 sv_rvweaken( ((hrattr_encap*)attr_from_sv(SvRV(aobj)))->obj_rv );
             }
         } else {
-            aobj = attr_simple_new(HR_PKG_ATTR_SCALAR, attr_fullstr, self);
+            blessparam_setstash(stash_params,
+                stash_from_cache_nocheck(my_stashcache_ref,HR_STASH_ATTR_SCALAR));
+            aobj = attr_simple_new(blessparam2chrp(stash_params), attr_fullstr, self);
         }
         
         a_ent = hv_store(REF2HASH(attr_lookup),
@@ -236,7 +243,7 @@ void HRA_store_a(SV *self, SV *attr, char *t, SV *value, ...)
     assert(SvROK(aobj));
     astring = newSVuv((UV)SvRV(aobj));
     
-    get_hashes((HV*)SvRV(self), HR_HKEY_LOOKUP_REVERSE, &rlookup, HR_HKEY_LOOKUP_NULL);
+    get_hashes(REF2TABLE(self), HR_HKEY_LOOKUP_REVERSE, &rlookup, HR_HKEY_LOOKUP_NULL);
     vhash = get_vhash_from_rlookup(rlookup, vstring, VHASH_INIT_FULL);
     a_r_ent = hv_fetch_ent(REF2HASH(vhash), astring, 1, 0);
     ref_in_vhash = HeVAL(a_r_ent);
@@ -250,7 +257,7 @@ void HRA_store_a(SV *self, SV *attr, char *t, SV *value, ...)
     /*In this case, the attribute's primary reference is, again, inside each
      vhash entry*/
     
-    if(!SvTRUE(hv_scalar(aptr->attrhash))) {
+    if(!HvKEYS(aptr->attrhash)) {
         /*First entry and we've already inserted our reverse entry*/
         SvREFCNT_dec(SvRV(aobj));
     }
@@ -360,7 +367,7 @@ static inline void attr_delete_from_vhash(SV *self, SV *value)
         
     mk_ptr_string(astr, SvRV(self));
     
-    get_hashes((HV*)attr_parent_tbl(attr),
+    get_hashes((HR_Table_t)attr_parent_tbl(attr),
                HR_HKEY_LOOKUP_REVERSE, &rlookup, HR_HKEY_LOOKUP_NULL);
     
     vhash = get_vhash_from_rlookup(rlookup, vaddr, 0);
@@ -443,7 +450,7 @@ static void attr_destroy_trigger(SV *self_sv, SV *encap_obj, HR_Action *action_l
     //sv_dump(self_sv);
     hrattr_simple *attr = attr_from_sv(self_sv);
     HR_DEBUG("hrattr=%p", attr);
-    HV *parent = attr_parent_tbl(attr);
+    HR_Table_t parent = attr_parent_tbl(attr);
     HR_DEBUG("Parent=%p", parent);
     SV *rlookup = NULL, *attr_lookup = NULL;
     
@@ -556,7 +563,7 @@ void HRXSATTR_ithread_predup(SV *self, SV *table, HV *ptr_map)
     SV *vtmp;
     SV *rlookup;
     
-    get_hashes(SvRV(table),
+    get_hashes(REF2TABLE(table),
                HR_HKEY_LOOKUP_REVERSE, &rlookup,
                HR_HKEY_LOOKUP_NULL);
     
@@ -593,7 +600,7 @@ void HRXSATTR_ithread_postdup(SV *newself, SV *newtable, HV *ptr_map)
     HR_DEBUG("Fetching new attrhash_ref");
     
     SV *new_attrhash_ref = hr_dup_newsv_for_oldsv(ptr_map, attr->attrhash, 0);
-    attr->attrhash = SvRV(new_attrhash_ref);
+    attr->attrhash = (HV*)SvRV(new_attrhash_ref);
     HR_DEBUG("New attrhash: %p", attr->attrhash);
         
     /*Now do the equivalent of: my @keys = keys %attrhash; foreach my $key (@keys)*/
@@ -652,7 +659,7 @@ void HRXSATTR_ithread_postdup(SV *newself, SV *newtable, HV *ptr_map)
         HR_add_actions_real(new_encap, encap_actions);
 
         aencap->obj_rv = new_encap;
-        aencap->obj_paddr = SvRV(new_encap);
+        aencap->obj_paddr = (char*)SvRV(new_encap);
 
         /*We also need to change our key string...*/
         char *oldstr = attr_strkey(aencap, sizeof(hrattr_encap));
