@@ -133,7 +133,7 @@ free_our_magic(SV* target)
 	mg_cur->mg_virtual = NULL;
     if(mg_cur == mg_last) {
         /*First magic entry*/
-        HR_DEBUG("Calling sv_unmagic");
+        HR_DEBUG("Calling sv_unmagic(%p)", mg_cur->mg_obj);
         sv_unmagic(mg_cur->mg_obj, PERL_MAGIC_ext);
 		HR_DEBUG("Done!");
     } else {
@@ -192,6 +192,7 @@ pl_del_action_common(SV *objref, SV *hashref,
 			_mg_action_list(mg), hashref, key, ktype)) == HR_ACTION_DELETED );
     /*no body*/
     HR_DEBUG("Delete done");
+	
     if(dv == HR_ACTION_EMPTY) {
         free_our_magic(SvRV(objref));
     }

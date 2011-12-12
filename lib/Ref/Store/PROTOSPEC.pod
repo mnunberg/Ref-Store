@@ -87,6 +87,16 @@ lookups
 This method will do any deinitialization to dissociate the value from the lookup;
 this usually means deleting added C<drefs>.
 
+=item ukey
+
+This should return the actual user key used to create the lookup object. This can
+be a stub function, in which case C<kstring> is used
+
+=item prefix_len
+
+If this lookup is prefixed, this is the length of the prefix. This is used to
+divide C<kstring> output into user-defined and internal portions.
+
 
 =back
 

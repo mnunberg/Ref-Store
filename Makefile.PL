@@ -20,16 +20,24 @@ WriteMakefile(
       : ()),
     PL_FILES            => {},
     PREREQ_PM => {
+        #for tests:
         'Dir::Self'         => 0,
         'Test::More' 		=> 0,
+        #for PP backend
         'Variable::Magic' 	=> 0.47,
         'Task::Weaken'  	=> 0,
+        #mainly for tests:
 		'Module::Stubber' 	=> 0.02,
+        #for base object:
 		'Class::XSAccessor' => 0,
+        #for sanity:
 		'Constant::Generate'=> 0.03,
-        'Devel::GlobalDestruction' => 0.04
+        #for sanity
+        'Devel::GlobalDestruction' => 0.04,
+        #for vlist()
+        'Devel::FindRef'    => 1.422
     },
-    LIBS                => ['-lprofiler'],
+    #LIBS                => ['-lprofiler'],
     OBJECT             => join(".o ", @modules) . ".o Store.o",
     dist                => { COMPRESS => 'gzip -9f', SUFFIX => 'gz', },
     clean               => { FILES => 'Ref-Store-* '. $GENERATED_FILES },

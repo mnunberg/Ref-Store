@@ -13,18 +13,25 @@ HSpec HR_LookupKeys[] = {
     {HR_HKEY_ALOOKUP, (char*)sizeof(HR_HKEY_ALOOKUP)-1}
 };
 
-typedef char hrk_simple;
+typedef struct
+__attribute__((packed))
+{
+    LOOKUP_FIELDS_COMMON;
+} hrk_simple;
 
-typedef struct {
-    SV*         obj_ptr;
+typedef struct
+__attribute__((packed))
+{
+    LOOKUP_FIELDS_COMMON;
     HR_Table_t  table;
+    SV*         obj_ptr;
     void*       obj_paddr;
 } hrk_encap;
 
 static inline HV*
 get_v_hashref(hrk_encap *ke, SV* value);
 
-#define ketbl_from_ke(ke) (HR_Table_t)(ke->table);
+#define ketbl_from_ke(ke) (HR_Table_t)(ke->table)
 
 #define keptr_from_sv(svp) \
     ((hrk_encap*)(SvPVX(svp)))
@@ -33,7 +40,7 @@ get_v_hashref(hrk_encap *ke, SV* value);
     ((hrk_simple*)(SvPVX(svp)))
 
 #define ksimple_strkey(ksp) \
-    ((char*)(((char*)ksp)+1))
+    (char*)(((char*)(ksp))+sizeof(hrk_simple))
 
 /*We find our information about ourselves here, and place it inside our
  private pointer table*/
@@ -60,7 +67,7 @@ void HRA_table_init(SV *self)
     };
     
     _stashspec *cspec;
-    for(cspec = classlist; (*cspec)[1]; cspec++) {        
+    for(cspec = classlist; (*cspec)[1]; cspec++) {
         stash = gv_stashpv((*cspec)[1], 0);
         if(!stash) {
             die("Couldn't get stash!");
@@ -194,11 +201,7 @@ SV *HRXSK_encap_getencap(SV *ksv_ref)
 }
 
 SV* HRXSK_encap_new(char *package, SV* object, SV *table, SV* forward, SV* scalar_lookup)
-{
-    
-    /*We need a way to determine whether package is actually a string,
-     or whether it's a */
-    
+{    
     HR_DEBUG("Encap key");
     SV *ksv = mk_blessed_blob(package, sizeof(hrk_encap));
     
@@ -211,7 +214,8 @@ SV* HRXSK_encap_new(char *package, SV* object, SV *table, SV* forward, SV* scala
     keptr->obj_paddr = (char*)SvRV(object);
     
     keptr->table = REF2TABLE(table);
-        
+
+#ifdef HR_CONSTRUCTOR_STORES_KEY
     mk_ptr_string(key_s, SvRV(object));
     HR_DEBUG("Have string key %s", key_s);
     HR_DEBUG("Scalar lookup: %p", scalar_lookup);
@@ -219,7 +223,8 @@ SV* HRXSK_encap_new(char *package, SV* object, SV *table, SV* forward, SV* scala
     SV *self_hval = newSVsv(ksv);
     sv_rvweaken(self_hval);
     hv_store( REF2HASH(scalar_lookup), key_s, strlen(key_s), self_hval, 0);
-    
+#endif
+
     /*DESTROY equiv*/
     HR_Action key_actions[] = {
         HR_DREF_FLDS_arg_for_cfunc(SvRV(ksv), &k_encap_cleanup),
@@ -270,8 +275,22 @@ get_v_hashref(hrk_encap *ke, SV* value)
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
 
-#define strkey_from_simple(sp) \
-    (char*)((sp)+sizeof(hrk_simple));
+//static void k_simple_cleanup(SV *ksv, void *arg, HR_Action *action_list)
+//{
+//    SV *flookup, *slookup;
+//    
+//    hrk_simple *ksimple = ksimple_from_sv(ksv);
+//    
+//    int keylen = strlen(ksimple_strkey(ksimple));
+//    
+//    get_hashes(ksimple->table,
+//               HR_HKEY_LOOKUP_FORWARD, &flookup,
+//               HR_HKEY_LOOKUP_SCALAR, &slookup,
+//               HR_HKEY_LOOKUP_NULL);
+//    hv_delete(REF2HASH(flookup), ksimple_strkey(ksimple), keylen, G_DISCARD);
+//    hv_delete(REF2HASH(slookup), ksimple_strkey(ksimple), keylen, G_DISCARD);
+//}
+//
 
 SV* HRXSK_new(char *package, char *key, SV *forward, SV *scalar_lookup)
 {
@@ -295,6 +314,7 @@ SV* HRXSK_new(char *package, char *key, SV *forward, SV *scalar_lookup)
     Zero(blob, 1, hrk_simple);
     Copy(key, key_offset, keylen, char);
     
+#ifdef HR_CONSTRUCTOR_STORES_KEY
     SV **scalar_entry = hv_store(REF2HASH(scalar_lookup),
                                  key, keylen-1,
                                  newSVsv(ksv), 0);
@@ -302,12 +322,18 @@ SV* HRXSK_new(char *package, char *key, SV *forward, SV *scalar_lookup)
         die("Couldn't add entry!");
     }
     sv_rvweaken(*scalar_entry);
-    
+#endif
+
     HR_Action actions[] = {
         HR_DREF_FLDS_Estr_from_hv(key_offset, scalar_lookup),
         HR_DREF_FLDS_Estr_from_hv(key_offset, forward),
         HR_ACTION_LIST_TERMINATOR
     };
+    
+    //HR_Action actions[] = {
+    //    HR_DREF_FLDS_arg_for_cfunc(SvRV(ksv), &k_simple_cleanup),
+    //    HR_ACTION_LIST_TERMINATOR
+    //};
     
     HR_add_actions_real(ksv, actions);
     return ksv;
@@ -315,10 +341,15 @@ SV* HRXSK_new(char *package, char *key, SV *forward, SV *scalar_lookup)
 
 char * HRXSK_kstring(SV *obj)
 {
-    char *blob = SvPVX(SvRV(obj));
-    char *ret = strkey_from_simple(blob);
+    char *blob = ksimple_from_sv(SvRV(obj));
+    char *ret = ksimple_strkey(blob);
     HR_DEBUG("Requested key=%s", ret);
     return ret;
+}
+
+UV HRXSK_prefix_len(SV *obj)
+{
+    return (ksimple_from_sv(SvRV(obj)))->prefix_len;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -338,10 +369,11 @@ static inline SV* ukey2ikey(
     HE *stored_key = NULL;
     
     HR_BlessParams stash_params;
-    blessparam_init(stash_params);
-    
+    int do_create = (options & STORE_OPT_O_CREAT);
     int key_is_ref = SvROK(key);
     SV *our_key = (key_is_ref) ? newSVuv(SvUV(key)) : key;    
+    HE *stored_val = NULL;
+    char *kstring_p = NULL;
     
     get_hashes(REF2TABLE(self),
                HR_HKEY_LOOKUP_SCALAR, &slookup,
@@ -352,46 +384,43 @@ static inline SV* ukey2ikey(
     HR_DEBUG("Using key %s", SvPV_nolen(our_key));
     
     /*PP: my $o = $self->scalar_lookup->{$ustr}; */
-    stored_key = hv_fetch_ent(REF2HASH(slookup), our_key, 0, 0);
+    stored_key = hv_fetch_ent(REF2HASH(slookup), our_key, do_create, 0);
     
-    if(stored_key && (kobj = HeVAL(stored_key))) {
-        /*PP: if ($expected != $existing) */
-        if(existing && SvROK(kobj) && SvRV(kobj) != SvRV(*existing)) {
-             die("Requested new key storage for value %p, but key is already "
-                 "linked to %p", SvRV(*existing), SvRV(kobj));
-        } else {
-            if(existing) *existing = kobj;
-            goto GT_RET;
-        }
+    if(stored_key == NULL) {
+        HR_DEBUG("No key found and no creation requested");
+        goto GT_RET; /*No create requested*/
     }
     
-    if(existing) *existing = NULL; /*No previous key*/
-    /*The previous block always returns*/
-    
-    if( (options & STORE_OPT_O_CREAT) == 0 ) {
+    kobj = HeVAL(stored_key);
+    if(SvROK(kobj)) {
+        /*Have valid key, check if we have an existing pointer*/
+        if(existing) {
+            stored_val = hv_fetch_ent(REF2HASH(flookup), our_key, 0, 0);
+            if(!stored_val) {
+                die("Found orphaned key without value");
+            }
+            if(SvRV(HeVAL(stored_val)) != SvRV(*existing)) {
+                die("Requested key ('%s') for value=%p, but existing key "
+                    "already stores %p",
+                    SvPV_nolen(our_key), SvRV(HeVAL(stored_val)), SvRV(*existing));
+            }
+            *existing = HeVAL(stored_val);
+            HR_DEBUG("Have kobj=%p", SvRV(kobj));
+        }
         goto GT_RET;
     }
     
-    /*else { */    
-    /*
-    PP: sub Ref::Store::XS::new_key($self,$ukey) {
-        if(ref $key) {
-            HRXSK_new(PKG_KEY_SCALAR, $key, $self->forward, $self->scalar_lookup);
-        } else {
-            HRXSK_encap_new(PKG_KEY_ENCAP, $key, $self->forward, $self->scalar_lookup);
-        }
+    if(existing) {
+        *existing = NULL;
     }
-    */
+    /*New key creation*/
+    blessparam_init(stash_params);
     if(key_is_ref) {
-        /*This function will do (among other things) the equivalent of:
-            newRV_inc(SvRV(our_key));
-        */
         blessparam_setstash(stash_params, stash_from_cache_nocheck(
             my_stashcache_ref, HR_STASH_KEY_ENCAP));
         
-        kobj =  HRXSK_encap_new(blessparam2chrp(stash_params),
+        kobj = HRXSK_encap_new(blessparam2chrp(stash_params),
                     key, self, flookup, slookup);
-        /*PP: if(!$options{StrongKey}) { $o->weaken_encapsulated() }*/
         if( (options & STORE_OPT_STRONG_KEY) == 0) {
             HRXSK_encap_weaken(kobj);
         }
@@ -404,6 +433,15 @@ static inline SV* ukey2ikey(
         /*XS Simple key's weaken_encapsulated is nop*/
     }
     
+#ifndef HR_CONSTRUCTOR_STORES_KEY
+    HR_DEBUG("Upgrading placeholder");
+    SvUPGRADE(HeVAL(stored_key), SVt_RV);
+    SvRV_set(HeVAL(stored_key), SvRV(kobj));
+    SvROK_on(HeVAL(stored_key));
+    SvREFCNT_inc(SvRV(kobj));
+    sv_rvweaken(HeVAL(stored_key));
+#endif
+
     GT_RET:
     if(key_is_ref && our_key) {
         SvREFCNT_dec(our_key);
@@ -412,41 +450,113 @@ static inline SV* ukey2ikey(
 }
 
 
-void HRA_store_sk(SV *self, SV *key, SV *value, ...)
-#define _store_sk_sanity_check \
-    if(!SvROK(value)) { die("Value must be a reference!"); } \
-    if( (items-3) % 2 ) { \
-        die("Odd number of extra arguments. Expected none or hash of options"); \
+
+static inline void
+store_helper(int *opt_p, SV **key_p, SV **vsv, char **prefix_p, int *prefix_len)
+{
+    dXSARGS;
+    int opt_start = 3;
+    char *key_s;
+    
+    if(!SvROK(*vsv)) {
+        if(items < 3) {
+            die("Value must be reference");
+        }
+        
+        else if(SvTYPE(*vsv) == SVt_PV) {
+            if(!SvROK(*key_p)) {
+                *prefix_p = SvPV(*vsv, *prefix_len);
+                if(!*prefix_p) {
+                    die("Couldn't get string key?");
+                }
+                key_s = SvPV_nolen(*key_p);
+                
+                *key_p = newSVpvf("%s%s%s",
+                    *prefix_p, HR_PREFIX_DELIM, key_s);
+            } else {
+                warn("Prefixed keys have no effect for object keys");
+            }
+            *vsv = ST(3);
+            opt_start++;
+        } else {
+            die("Got weird arguments. store(key, [type], value, %options)");
+        }
     }
+    
+    if( (items - opt_start) % 2 ) {
+        die("Odd number of option hash arguments");
+    }
+    
+    for(opt_start; opt_start < items; opt_start += 2) {
+        _chkopt(STRONG_VALUE, opt_start, (*opt_p));
+        _chkopt(STRONG_KEY, opt_start, (*opt_p));
+    }
+    XSRETURN(0);
+}
+
+
+void HRA_store_kt(SV *self, SV *key, SV *t, SV *value, ...)
+{
+    SV *kt_lookup;
+    HE *key_res;
+    
+    get_hashes(REF2TABLE(self), HR_HKEY_LOOKUP_KT, &kt_lookup,
+               HR_HKEY_LOOKUP_NULL);
+    
+    key_res = hv_fetch_ent(REF2HASH(kt_lookup), t, 0, 0);
+    if(!key_res) {
+        die("Couldn't fetch key for %s", SvPV_nolen(key));
+    }
+    /*Value is unused, and is popped off the stack..*/
+    HRA_store_sk(self, key, HeVAL(key_res));
+}
+
+/*The third argument is only the value for the perl-facing store/store_sk
+ functions. For store_kt, the value is actually the fourth argument, hence
+ the handling by store_helper()
+*/
+
+void HRA_store_sk(SV *self, SV *key, SV *value, ...)
 {
     SV *flookup = NULL,  *rlookup = NULL; //Lookup tables
-    SV *kobj = NULL, *kstring = NULL; // Key object and string
-    SV *vstring = newSVuv(SvUV(value)); //Value refaddr
-    SV *hval = newSVsv(value); //reference to store in the forward hash
-    SV *existing_ent = value; /* SV** to send/receive options for O_CREAT/O_EXCL*/
+    SV *kobj    = NULL, *kstring = NULL; // Key object and string
+    SV *vstring = NULL; //Value refaddr
+    SV *hval    = NULL; //reference to store in the forward hash
+    SV *existing_ent = NULL; /* SV** to send/receive options for O_CREAT/O_EXCL*/
     SV *vhash; //Value's lookup references
-    
+    char *prefix = NULL;
+    int prefix_len = 0;
     int key_is_ref = SvROK(key);
     int iopts = STORE_OPT_O_CREAT;
-    int i;
     
-    dXSARGS;
-    
-    _store_sk_sanity_check;
-    
-    for(i = 3; i < items; i += 2) {
-        _chkopt(STRONG_VALUE, i, iopts);
-        _chkopt(STRONG_KEY, i, iopts);
-    }
+    store_helper(&iopts, &key, &value, &prefix, &prefix_len);
+    existing_ent = value;
     
     kobj = ukey2ikey(self, key, &existing_ent, iopts);
+    
     if(existing_ent) {
         HR_DEBUG("We're already stored");
-        XSRETURN(0);
+        goto GT_CLEANUP;
     }
-        
+    
+    vstring = newSVuv(SvUV(value));
+    hval = newSVsv(value);
+    
     /*Not stored yet*/
-    kstring = (key_is_ref) ? newSVuv(SvUV(key)) : key;    
+    if(key_is_ref) {
+        kstring = newSVuv(SvUV(key));
+        (ksimple_from_sv(SvRV(kobj)))->prefix_len = 0;
+    } else {
+        kstring = key;
+        if(prefix_len) {
+            if(prefix_len > HR_PREFIX_LEN_MAX) {
+                die("Prefixes longer than %d chars unsupported", HR_PREFIX_LEN_MAX);
+            } else {
+                (ksimple_from_sv(SvRV(kobj)))->prefix_len = prefix_len;
+            }
+        }
+    }
+    
     get_hashes(REF2TABLE(self),
                HR_HKEY_LOOKUP_FORWARD, &flookup,
                HR_HKEY_LOOKUP_REVERSE, &rlookup,
@@ -454,21 +564,15 @@ void HRA_store_sk(SV *self, SV *key, SV *value, ...)
     /*Get value hashref*/
     vhash = get_vhash_from_rlookup(rlookup, vstring, 1);
     assert(vhash);
-    /*PP: $self->reverse->{$vstring}->{$kstring} = $kobj*/
     hv_store_ent(REF2HASH(vhash), kstring, kobj, 0);
     
-    /*PP: $self->forward->{$kstring} = $value*/
-    HR_DEBUG("Storing FLOOKUP{%s} (SV=%p) (RV=%p)", SvPV_nolen(kstring), hval, SvRV(hval));
+    HR_DEBUG("Storing FLOOKUP{%s} (SV=%p) (RV=%p)",
+             SvPV_nolen(kstring), hval, SvRV(hval));
+    
     hv_store_ent(REF2HASH(flookup), kstring, hval, 0);
-
     
     /*PP: dref_add_ptr*/
     HR_PL_add_action_ptr(hval, rlookup);
-    
-    /*PP: $ko->link_value(); only valid for encapsulated keys*/
-    if(key_is_ref) {
-        HRXSK_encap_link_value(kobj, hval);
-    }
     
     /*PP: if(!$options{StrongValue}) { weaken($self->forward->kstring)}*/
     if( (iopts & STORE_OPT_STRONG_VALUE) == 0) {
@@ -477,11 +581,15 @@ void HRA_store_sk(SV *self, SV *key, SV *value, ...)
     }
     
     GT_CLEANUP:
-    if(key_is_ref) {
+    if(key_is_ref && kstring) {
         SvREFCNT_dec(kstring);
     }
-    SvREFCNT_dec(vstring);
-    XSRETURN(0);
+    if(vstring) {
+        SvREFCNT_dec(vstring);
+    }
+    if(prefix_len) {
+        SvREFCNT_dec(key);
+    }
 }
 
 SV *HRA_fetch_sk(SV *self, SV *key)

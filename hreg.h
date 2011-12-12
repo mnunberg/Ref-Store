@@ -8,7 +8,7 @@
 
 /*#define HR_DEBUG*/
 
-#define HR_DEBUG
+//#define HR_DEBUG
 
 #ifndef HR_DEBUG
 static int _hr_enable_debug = -1;
@@ -121,8 +121,6 @@ _mk_ptr_string(char *str, unsigned long long value)
         strlen(actionp->key)
 
 #define HREG_API_INTERNAL
-
-
 
 typedef enum {
     HR_ACTION_TYPE_NULL         = 0,
@@ -269,22 +267,24 @@ void HR_PL_add_action_ext(
 
 /* H::R implementation */
 
-SV*  HRXSK_new(char *package, char *key, SV *forward, SV *scalar_lookup);
-char *HRXSK_kstring(SV* self);
-void HRXSK_ithread_postdup(SV *newself, SV *newtable, HV *ptr_map, UV old_table);
+SV*		HRXSK_new(char *package, char *key, SV *forward, SV *scalar_lookup);
+char*	HRXSK_kstring(SV* self);
+UV		HRXSK_prefix_len(SV *self);
+void 	HRXSK_ithread_postdup(SV *newself, SV *newtable, HV *ptr_map, UV old_table);
 
-
-
-SV* HRXSK_encap_new(char *package, SV *encapsulated_object,
+SV* 	HRXSK_encap_new(char *package, SV *encapsulated_object,
                     SV *table, SV *forward, SV *scalar_lookup);
+UV 		HRXSK_encap_kstring(SV *ksv_ref);
+void 	HRXSK_encap_weaken(SV *ksv_ref);
+void 	HRXSK_encap_link_value(SV *self, SV *value);
+SV*  	HRXSK_encap_getencap(SV *self);
 
-UV HRXSK_encap_kstring(SV *ksv_ref);
-void HRXSK_encap_weaken(SV *ksv_ref);
-void HRXSK_encap_link_value(SV *self, SV *value);
-SV*  HRXSK_encap_getencap(SV *self);
-void HRXSATTR_unlink_value(SV *aobj, SV *value);
-SV*  HRXSATTR_get_hash(SV *aobj);
-char* HRXSATTR_kstring(SV *aobj);
+
+void 	HRXSATTR_unlink_value(SV *aobj, SV *value);
+SV*  	HRXSATTR_get_hash(SV *aobj);
+char*	HRXSATTR_kstring(SV *aobj);
+UV		HRXSATTR_prefix_len(SV *aobj);
+SV*		HRXSATTR_encap_ukey(SV *aobj);
 
 void HRXSK_encap_ithread_predup(SV *self, SV *table, HV *ptr_map, SV *value);
 void HRXSK_encap_ithread_postdup(SV *newself, SV *newtable, HV *ptr_map, UV old_table);
@@ -293,16 +293,16 @@ void HRXSATTR_ithread_predup(SV *self, SV *table, HV *ptr_map);
 void HRXSATTR_ithread_postdup(SV *newself, SV *newtable, HV *ptr_map);
 
 /*H::R API*/
-void HRA_table_init(SV *self);
+void 	HRA_table_init(SV *self);
+void 	HRA_store_sk(SV *hr, SV *ukey, SV *value, ...);
+void 	HRA_store_kt(SV *hr, SV *ukey, SV *t, SV *value, ...);
+SV* 	HRA_fetch_sk(SV *hr, SV *ukey); /*we manipulate perl's stack in this one*/
 
-void HRA_store_sk(SV *hr, SV *ukey, SV *value, ...);
-SV* HRA_fetch_sk(SV *hr, SV *ukey); /*we manipulate perl's stack in this one*/
-
-void HRA_store_a(SV *hr, SV *attr, char *t, SV *value, ...);
-void  HRA_fetch_a(SV *hr, SV *attr, char *t);
-void HRA_dissoc_a(SV *hr, SV *attr, char *t, SV *value);
-void HRA_unlink_a(SV *hr, SV *attr, char *t);
-SV* HRA_attr_get(SV *hr, SV *attr, char *t);
-void HRA_ithread_store_lookup_info(SV *self, HV *ptr_map);
+void 	HRA_store_a(SV *hr, SV *attr, char *t, SV *value, ...);
+void  	HRA_fetch_a(SV *hr, SV *attr, char *t);
+void 	HRA_dissoc_a(SV *hr, SV *attr, char *t, SV *value);
+void 	HRA_unlink_a(SV *hr, SV *attr, char *t);
+SV* 	HRA_attr_get(SV *hr, SV *attr, char *t); //Do we really need this?
+void 	HRA_ithread_store_lookup_info(SV *self, HV *ptr_map);
 
 #endif /*HREG_H_*/

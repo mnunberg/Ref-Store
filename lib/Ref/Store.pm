@@ -2,7 +2,7 @@ package Ref::Store;
 use strict;
 use warnings;
 
-our $VERSION = '0.08_0';
+our $VERSION = '0.15_0';
 
 use Scalar::Util qw(weaken);
 use Carp::Heavy;
@@ -14,25 +14,26 @@ use Devel::GlobalDestruction;
 use Data::Dumper;
 use Log::Fu { level => "debug" };
 use Carp qw(confess cluck);
+use Devel::FindRef qw(ptr2ref);
 
+use base qw(Ref::Store::Feature::KeyTyped Exporter);
+our (@EXPORT,@EXPORT_OK,%EXPORT_TAGS);
+
+use Constant::Generate [qw(
+	REF_STORE_FALSE
+	REF_STORE_TRUE
+	
+	REF_STORE_KEY
+	REF_STORE_ATTRIBUTE
+	
+)], -tag => 'ref_store_constants',
+	-export => 1,
+	-export_tags => 1;
 
 use Class::XSAccessor::Array
-	constructor => 'real_new',
-	accessors	=> {
-		scalar_lookup 	=> HR_TIDX_SLOOKUP,
-		reverse			=> HR_TIDX_RLOOKUP,
-		forward			=> HR_TIDX_FLOOKUP,
-		attr_lookup		=> HR_TIDX_ALOOKUP,
-		keytypes		=> HR_TIDX_KEYTYPES,
-		
-		keyfunc			=> HR_TIDX_KEYFUNC,
-		unkeyfunc		=> HR_TIDX_UNKEYFUNC,
-		
-		priv			=> HR_TIDX_PRIVDATA,
-		flags			=> HR_TIDX_FLAGS
-	};
-
-use base qw(Ref::Store::Feature::KeyTyped);
+	accessors	=> { 
+        %Ref::Store::Common::LookupNames 
+    };
 
 my %Tables; #Global hash of tables
 
@@ -79,13 +80,12 @@ sub new {
 	my $self = [];
 	bless $self, $cls;
 	
-	foreach my $lidx (HR_TIDX_FLOOKUP,
-					  HR_TIDX_RLOOKUP,
-					  HR_TIDX_SLOOKUP,
-					  HR_TIDX_ALOOKUP,
-					  HR_TIDX_KEYTYPES) {
-		$self->[$lidx] = {};
-	}
+	$self->[$_] = {} for
+		(HR_TIDX_FLOOKUP,
+		HR_TIDX_RLOOKUP,
+		HR_TIDX_SLOOKUP,
+		HR_TIDX_ALOOKUP,
+		HR_TIDX_KEYTYPES);
 	
 	$self->[HR_TIDX_KEYFUNC] = $options{keyfunc};
 	$self->[HR_TIDX_UNKEYFUNC] = $options{unkeyfunc};
@@ -102,14 +102,9 @@ sub purge {
 	my ($self,$value) = @_;
 	return unless defined $value;
 	my $vstring = $value + 0;
-	
-	my $prev = Dumper($self);
+		
 	foreach my $ko (values %{ $self->reverse->{$vstring} }) {
 		if(!defined $ko) {
-			log_err("State of table when entering this function");
-			print $prev;
-			log_err("Current state");
-			print Dumper($self);
 			die "Found stale key object!";
 		}
 		$ko->unlink_value($value);
@@ -212,6 +207,122 @@ sub is_empty {
 		&& %{$self->attr_lookup} == 0;
 }
 
+sub vlist {
+	my $self = shift;
+	return map { Devel::FindRef::ptr2ref $_+0 } keys %{ $self->reverse };
+}
+
+sub _mk_keyspec {
+	my $lookup = shift;
+	my $prefix;
+	my $kstring = $lookup->kstring;
+	my $ukey = $lookup->ukey;
+	$ukey = $kstring unless defined $ukey;
+	if($lookup->prefix_len) {
+		$prefix = substr($kstring, 0, $lookup->prefix_len);
+		if(!ref $ukey) {
+			$ukey = substr($kstring, $lookup->prefix_len+1);
+		}
+	} else {
+		$prefix = "";
+	}
+	return ($prefix, $ukey);
+}
+
+sub klist {
+	my ($self,%options) = @_;
+	my @ret;
+	foreach my $kobj (values %{$self->forward}) {
+		push @ret, [REF_STORE_KEY, _mk_keyspec($kobj)];
+	}
+	foreach my $aobj (values %{$self->attr_lookup}) {
+		push @ret, [REF_STORE_ATTRIBUTE, _mk_keyspec($aobj)];
+	}
+	return @ret;
+}
+
+
+#This is the iteration mechanism. An 'iterator' is an internal structure
+#which keeps track of the items we wish to iterate over. the CUR field
+#is a simple integer. the HASH field is an array of hashrefs, with the
+#current active hash specified with the CUR field; thus the currently
+#iterated-over hash is $iter->[ITER_FLD_HASH]->[ $iter->[ITER_FLD_CUR] ];
+# When the CUR field reaches ITER_CUR_END, it means there are no more
+#hashes to iterate over.
+use constant {
+	ITER_FLD_HASH 	=> 0,
+	ITER_FLD_CUR	=> 1,
+	
+	ITER_CUR_KEYS	=> 0,
+	ITER_CUR_ATTR	=> 1,
+	ITER_CUR_END	=> 2
+};
+sub iterinit {
+	my ($self,%options) = @_;
+	
+	warn("Resetting existing non-null iterator") if defined $self->_iter;
+	
+	keys %{$self->scalar_lookup};
+	keys %{$self->attr_lookup};
+	my $iter = [];
+	$iter->[ITER_FLD_CUR] = 0;
+	
+	$iter->[ITER_FLD_HASH]->[ITER_CUR_KEYS] = $self->scalar_lookup;
+	$iter->[ITER_FLD_HASH]->[ITER_CUR_ATTR] = $self->attr_lookup;
+	
+	if($options{OnlyKeys}) {
+		delete $iter->[ITER_FLD_HASH]->[ITER_CUR_ATTR];
+	} elsif ($options{OnlyAttrs}) {
+		delete $iter->[ITER_FLD_HASH]->[ITER_CUR_KEYS];
+		$iter->[ITER_FLD_CUR]++;
+	}
+	$self->_iter($iter);
+	return;
+}
+
+sub iterdone {
+	my $self = shift;
+	$self->_iter(undef);
+}
+
+sub iter {
+	my $self = $_[0];
+	my $iter = $self->_iter;
+	return unless $iter;
+	my @ret;
+	#print Dumper($iter);
+	my $nextk = each %{$iter->[ITER_FLD_HASH]->[ $iter->[ITER_FLD_CUR] ] };
+	goto GT_EMPTY unless defined $nextk;
+	
+	my $lookup = $iter->[ITER_FLD_HASH]->[ $iter->[ITER_FLD_CUR] ]->{$nextk};
+	
+	goto GT_EMPTY unless defined $lookup;
+	
+	
+	
+	if($iter->[ITER_FLD_CUR] == ITER_CUR_KEYS) {
+		@ret = (REF_STORE_KEY,
+				_mk_keyspec($lookup),
+				$self->forward->{$lookup->kstring});
+	} else {
+		#Attribute		
+		@ret = (REF_STORE_ATTRIBUTE,
+				_mk_keyspec($lookup),
+				[values %{$lookup->get_hash}]);
+	}
+	return @ret;
+	
+	GT_EMPTY:
+	while($iter->[ITER_FLD_CUR]++ < ITER_CUR_END) {
+		if($iter->[ITER_FLD_HASH]->[ $iter->[ITER_FLD_CUR ] ]) {
+			goto &iter;
+		}
+	}
+	#End!
+	$self->_iter(undef);
+	return ();
+}
+
 sub dump {
 	my $self = shift;
 	my $dcls = "Ref::Store::Dumper";
@@ -284,10 +395,16 @@ sub store_sk {
 }
 *store = \&store_sk;
 
+
+#sub store_kt {
+#	my ($self,$ukey,$prefix,$value,%options) = @_;
+#	
+#}
+
 sub fetch_sk {
-	my ($self,$simple_scalar) = @_;
+	my ($self,$ukey) = @_;
 	#log_info("called..");
-	my $o = $self->ukey2ikey($simple_scalar);
+	my $o = $self->ukey2ikey($ukey);
 	return unless $o;
 	return $self->forward->{$o->kstring};
 }
@@ -295,29 +412,30 @@ sub fetch_sk {
 
 #This dissociates a value from a single key
 sub unlink_sk {
-	my ($self,$simple_scalar) = @_;
+	my ($self,$ukey) = @_;
 	
-	my $stored = $self->fetch($simple_scalar);
-	
-	my $ko = $self->ukey2ikey($simple_scalar);
+	my $ko = $self->ukey2ikey($ukey);
 	return unless $ko;
+	my $value = $self->forward->{$ko->kstring};
+	die "Found orphaned key $ko" unless defined $value;
 	
-	die "Found orphaned key $ko" unless $stored;
-	my $vstr = $stored + 0;
+	my $vstr = $value + 0;
 	my $kstr = $ko->kstring;
-	delete $self->reverse->{$vstr}->{$kstr};
-	my $v = delete $self->forward->{$kstr};
 	
-	$ko->unlink_value($stored);
+	my $vhash = $self->reverse->{$vstr};
 	
-	if(!keys %{$self->reverse->{$vstr}}) {
-		
+	die "Can't locate vhash" unless defined $vhash;
+	delete $vhash->{$kstr};
+	
+	$ko->unlink_value($value);
+	
+	if(!%{$self->reverse->{$vstr}}) {
 		delete $self->reverse->{$vstr};
-		$self->dref_del_ptr($stored, $self->reverse, $stored+0);
+		$self->dref_del_ptr($value, $self->reverse, $vstr);
 		
 	}
 	
-	return $stored;
+	return $value;
 }
 *unlink = \&unlink_sk;
 
@@ -470,6 +588,18 @@ sub unlink_a {
 
 
 *lexists_a = \&has_attr;
+
+sub Dumperized {
+	my $self = shift;
+	return {
+		"This is the Toaster method" => "NOTICE!",
+		
+		'Reverse Lookups' => $self->reverse,
+		'Forward Lookups' => $self->forward,
+		'Scalar Lookups' => $self->scalar_lookup,
+		'Attribute Lookups' => $self->attr_lookup
+	};
+}
 
 sub DESTROY {
 	return if in_global_destruction;
@@ -730,69 +860,179 @@ L<KiokuDB>, L<Tangram> or L<Pixie> - these modules will store your I<data>.
 However, if you are specifically wanting to maintain garbage-collected and reference
 counted perl objects, then this module is for you. continue reading.
 
-=head2 USAGE APPLICATIONS AND BENEFITS
-
-This module caters to the common, but very narrow scope of opaque perl references.
-It cares nothing about what kind of objects you are using as keys or values. It
-will never dereference your object or call any methods on it, thus the only
-requirement for an object is that it be a perl reference.
-
-Using this module, it is possible to create arbitrarily complex, but completely
-leak free dependency and relationship graphs between objects.
-
-Sometimes, expressing object lifetime dependencies in terms of encapsulation is
-not desirable. Circular references can happen, and the hierarchy can become
-increasingly complex and deep - not just logically, but also syntactically.
-
-This becomes even more unwieldy when the same object has various sets of dependants.
-
-A good example would be a socket server proxy, which accepts requests from clients,
-opens a second connection to a third-party server to process the client request,
-forwards the request to the client's intended origin server, and then finally
-relays the response back to the client.
-
-At a more basic level, this module is good for general simple and safe by-object
-indexing and object tagging. It is also a good replacement for L<Hash::Util::FieldHash>
-support for perls which do not support tied hash C<uvar> magic; so you can use
-Ref::Store for inside out objects with no limitations, on any perl >= 5.8
-
-For most simple applications there is no true need to have multiple dynamically
-associated and deleted object entries. The benefits of this module become
-apparent in design and ease of use when larger and more complex,
-event-oriented systems are in use.
-
-In shorter terms, this module allows you to reliably use a I<Single Source Of Truth>
-for your object lookups. There is no need to synchronize multiple lookup tables
-to ensure that there are no dangling references to an object you should have deleted
-
-
-=head2 SYNOPSIS
-
 
 =head2 FEATURES
 
+=head3 The problem
+
+I've had quite the difficult task of explaining what this module actually does.
+
+Specifically, C<Ref::Store> is intended for managing and establishing dependencies
+and lookups between perl objects, which at their most basic levels are opaque
+entities in memory that are reference counted.
+
+The lifetime of an object ends when its reference count hits zero, meaning that
+no data structure or code is referring to it.
+
+When a new object is created (normally done through C<bless>), it has a reference
+count of 1. As more copies of the object reference are made, the reference count
+of the object increases.
+
+What this also means is that each time an object is inserted into a hash as a
+value, its reference count increases - and as a result, the object (and all
+other objects which it contains) will not be destroyed until it is removed
+from all those hashes.
+
+Perl core offers the concept of a I<weak> reference, and is exposed to perl code
+via L<Scalar::Util>'s weaken. Weak references allow the maintaining of an object
+reference without actually increasing the object's reference count.
+
+Internally (in the Perl core), the object maintains a list of all weak references
+referring to it, an when the object's own reference count hits zero, those
+weak references are changed to C<undef>.
+
+As this relates to hash entries, the value of the entry becomes C<undef>, but
+the entry itself is not deleted.
+
+	use Scalar::Util qw(weaken);
+	my %hash;
+	my $object = \do { my $o };
+	weaken($hash{some_key} = $object);
+	undef $object;
+	
+	#The following will be true:
+	exists$hash{some_key} && $hash{some_key} == undef;
+	
+When iterating over the hash keys, one must then check to see if the value is
+undefined - which is often a messy solution.
+
+If the hash's values are constantly being changed and updated, but not frequently
+iterated through, this can cause a significant memory leak.
+
+Additionally, weakref semantics are cumbersome to deal with in pure perl. The
+weakness of a reference only applies to that specific variable; therefore, the
+general semantics of C<my $foo = $bar>, where $foo is understood to be an exact
+replica of C<$bar> are broken. If C<$bar> is a weak reference, C<$foo> does not
+retain such a property, and will increase the reference count of whatever foo and
+bar refer to.
+
+Dealing with collection items, especially tied hashes and arrays becomes even
+more cumbersome. In some perls, doing the following with
+a tied hash will not work:
+
+	weaken($foo);
+	$tied_hash{some_key} = $foo;
+	
+	# $foo is copied to the tied hash's STORE method.
+	
+This bug has since been fixed, but not everyone has the luxury of using the newest
+and shiniest Perl.
+
+=head3 Other modules and their featuresets
+
+In the event that weak reference keys are needed, there are several modules
+that implement solutions:
+
+L<Tie::RefHash::Weak> is a pure-perl tied hash
+which maintains weak keys. However it will not necessarily do the same for values,
+even when C<weaken> is used explicitly, because of aforementioned bugs. It is also
+significantly slow due to its C<TIE> interface.
+
+
+L<Hash::Util::FieldHash> is part of core since perl 5.10, and depends on something
+known as Hash C<uvar> magic, a new feature introduced in 5.10. It does not suffer
+from the slowness of L<Tie::RefHash::Weak>, and allows you to (manually) create
+weak values. However, keys used for C<FieldHash> are permanently associated with
+the hash they have been keyed to, even if the entry or hash have been deleted.
+
+
+L<Hash::FieldHash> attempts to eliminate the version dependencies and caveats
+of C<Hash::Util::FieldHash>, but restricts the keys to only being references.
+
+
+=head3 Ref::Store's featureset
+
+C<Ref::Store> supports all features in the above mentioned modules, and the following
+
 =over
 
-=item One-To-Many association
+=item By-Value garbage collection
 
-It is possible, given a value, to retrieve all its keys, and vice versa. It is also
-possible to establish many-to-many relationships by using the same object as both
-a key and a value for different entries.
+When a value is stored as a weak reference (see the next section)
+and itsreference count hits
+zero, then the entire hash entry is deleted; the table does not collect stale entries
 
-=item Key Types
+=item By-Value deletion
 
-This table accepts a key of any type, be it a simple string or an object reference.
-Keys are internally stored as object references and encapsulate the original
-key.
+Unlike normal hashes, C<Ref::Store> can quickly and efficiently delete a value
+and all its dependent keys given just the value. No need to remember any lookup
+key under which the value has been stored
 
-=item Garbage Collection (or not)
+=item Multi-Value keys (Attributes)
 
-Both key and value types can be automatically selected for garbage collection,
-and strength relationships established between them. Thus, it is possible for a
-value to be automatically deleted if all its keys are deleted, and for all keys
-to be deleted once a value is deleted. Since both keys and values can be object
-references, this provides a lot of flexibility
+Traditional hashes only allow storing of a single value under a single key. For
+multi-value storage under a single key, one must fiddle with nested data structures.
 
+Like single-value keys, attributes may be reference objects, and will be discarded
+from the hash when the last remaining value's reference count hits zero.
+
+Additionally, the same reference attribute object can serve as a key for multiple
+independent value sets, allowing to logically decouple collections which are
+dependent on a single object.
+
+=item User defined retention policy
+
+For each key and value, it is possible to define whether either the key, the value,
+or both should be strong or weak references. C<Ref::Store> by default stores
+keys and values as weak references, but can be modified on a per-operation basis.
+
+Values can also be stored multiple times under multiple keys with different
+retention policies: maintain a single 'primary' index, and multiple 'secondary'
+indices.
+
+=item Speed
+
+Most of the features are implemented in C, some because of speed, and others
+because there was no pure-perl way to do it (See the C<PP> backend, which is
+fairly buggy)
+
+=item Works on perl 5.8
+
+This has been tested and developed for perl 5.8.8 (which is the perl provided in
+el5).
+
+=back
+
+Here are some caveats
+
+=over
+
+=item No Hash Syntax
+
+C<Ref::Store> is a proper object. You cannot use the table as an actual hash
+(though it would be easy enough to wrap it in the C<tie> interface, it would
+be signficantly slower, and suffer from other problems related to C<tie>)
+
+=item Slow/Untested thread cloning
+
+While attempts have been made to make this module thread-safe, there are strange
+messages about leaked scalars and unbalanced string tables when dealing with threads.
+
+=item Values Restricted to References
+
+Values themselves must be reference objects. It's easy enough, however, to do
+
+	$table->store("foo", \"foo");
+	${$table->fetch("foo")} eq "foo";
+	
+=item Slower than C<Hash::Util::FieldHash>
+
+This module is about 40% slower than C<Hash::Util::FieldHash>
+
+=item Must use Attribute API for multi-entry lookup objects
+
+If you wish to use the same key twice, the key must be used with the Attribute
+API, and not the (faster) key API
 
 =back
 
@@ -1124,7 +1364,104 @@ loaded).
 
 =back
 
-=head2 DEBUGGING
+=head2 ITERATION
+
+While C<Ref::Store> is not a simple collection object, you can still iterate over
+values using the following formats
+
+	#Like keys %hash:
+	
+	my @keyspecs = $refstore->klist();
+	my @values	 = $refstore->vlist();
+	
+	#Like each %hash;
+	
+	$refstore->iterinit(); #Initialize the iterator
+	while ( my ($lookup_type, $lookup_prefix, $my_key, $my_value) = $refstore->iter )
+	{
+		#do stuff.. but don't modify the list!
+	}
+	#Cleanup internal iterator state
+	$refstore->iterdone();
+
+Because of the various types of keys which can be stored, all iteration functions
+return a 'key specification' - a list of three elements:
+
+=over
+
+=item Lookup Type
+
+This is one of C<REF_STORE_KEY> for key lookups, and C<REF_STORE_ATTRIBUTE> for
+attribute lookups (depending on whether this was stored with L<store> or L<store_a>).
+
+The type is necessary to determine which lookup function to call in the event
+that a more detailed operation is needed.
+
+=item Prefix/Type
+
+For store functions which use a type (L<store_kt> and L<store_a>), this is
+the type. Useful to determine the parameter to call for further operations
+
+=item User Key
+
+This is the actual key which was passed in to the store function. This can
+be a string or a reference.
+
+=back
+
+A simpler API which copies its return values in lists are provided:
+
+=over
+
+=item vlist()
+
+Returns a list of all value objects. This list is a copy.
+
+=item klist()
+
+Returns a list of arrayrefs containing key specifications
+
+=over
+
+A more complex iterator API is provided. Unlike the simpler API, this does
+not copy its return values, thus saving memory
+
+=over
+
+=item iterinit()
+
+Initialize the internal iterator state. This must be called each time before
+anything else happens. Like perl hashes, C<Ref::Store> maintains a global
+iterator state; calling C<iterinit> resets it.
+
+It is an error to initialize a possibly active iterator without explicitly
+destroying the previous one. Also, modifying the table during iteration could
+lead to serious problems. Unlike perl hashes, it is not safe to delete the
+currently iterated-over element; this is because the iteration is emulated and
+gathered from multiple hash states, and deletion of one element can trigger
+subsequent deletions.
+
+If you happen to clobber an old iterator, this module will throw a warning. To
+avoid accidentally doing so, call L</iterdone> after you have finished iterating.
+
+=item iter()
+
+Compare to L<each>. Returns a 4-element list, the first three of which are the
+key specification, and the last is a value specification. For attribute lookups,
+this is an arrayref of values indexed under the attribute, and for key lookups
+this is the sole value.
+
+Once this function returns the empty list, there are no more pairs left to
+traverse.
+
+=item iterdone()
+
+Call this function if you break out of a loop, or to explicitly de-initialize the
+iterator state.
+
+=back
+
+=head2 DEBUGGING/INFORMATIONAL
 
 Often it is helpful to know what the table is holding and indexing, possibly because
 there is a bug or because you have forgotten to delete something.
@@ -1140,6 +1477,8 @@ a hash of values. When functioning properly, a value should never exist without
 a key lookup, but this is still alpha software
 
 =item vlookups($value)
+
+I<not yet implemented>
 
 Returns an array of stringified lookups for which this value is registered
 
@@ -1172,6 +1511,87 @@ though YMMV (on my machine, PP thread tests segfault).
 
 Thread safety is quite difficult since reference objects are keyed by their
 memory addresses, which change as those objects are duplicated.
+
+
+=head2 USAGE APPLICATIONS
+
+This module caters to the common, but very narrow scope of opaque perl references.
+It cares nothing about what kind of objects you are using as keys or values. It
+will never dereference your object or call any methods on it, thus the only
+requirement for an object is that it be a perl reference.
+
+Using this module, it is possible to create arbitrarily complex, but completely
+leak free dependency and relationship graphs between objects.
+
+Sometimes, expressing object lifetime dependencies in terms of encapsulation is
+not desirable. Circular references can happen, and the hierarchy can become
+increasingly complex and deep - not just logically, but also syntactically.
+
+This becomes even more unwieldy when the same object has various sets of dependants.
+
+A good example would be a socket server proxy, which accepts requests from clients,
+opens a second connection to a third-party server to process the client request,
+forwards the request to the client's intended origin server, and then finally
+relays the response back to the client.
+
+For most simple applications there is no true need to have multiple dynamically
+associated and deleted object entries. The benefits of this module become
+apparent in design and ease of use when larger and more complex,
+event-oriented systems are in use.
+
+In shorter terms, this module allows you to reliably use a I<Single Source Of Truth>
+for your object lookups. There is no need to synchronize multiple lookup tables
+to ensure that there are no dangling references to an object you should have deleted
+
+=head1 BUGS AND CAVEATS
+
+Probably many.
+
+The XS backend (which is also the default) is the more stable version. The pure-
+perl backend is more of a reference implementation which has come to lag behind
+its XS brother because of magical voodoo not possible in a higher level language
+like Perl.
+
+Your system will need a working C compiler which speaks C99. I have not tested
+this on 
+
+=over
+
+=item *
+
+It is not advisable to store one table within another. Doing so may cause strange
+things to happen. It would make more sense to have a table being module-global
+anyway, though. C<Ref::Store> is really not a lightweight object.
+
+=item *
+
+It is currently not possible to store key objects with prefixes/types. If you need
+prefixed object keys, use the attribute API.
+
+
+=item *
+
+On my system, making a circular link between two objects will not work properly
+in terms of garbage collection; this means the following
+
+	$foo = \do bless { my $o };
+	$bar = \do bless { my $o };
+	#both objects
+	$rs->store($foo, $bar);
+	$rs->store($bar, $foo);
+	
+Will not work on the PP backend. It is fully supported in the default XS backend,
+however.
+
+=item *
+
+The iteration and C<klist> APIs are not yet implemented in the PP version
+
+=item *
+
+Keyfunc and friends are not fully implemented, either
+
+=over
 
 =head1 AUTHOR
 

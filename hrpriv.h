@@ -95,11 +95,16 @@ refcnt_ka_end(SV *sv, U32 old_refcount)
     }
 }
 
+#define HR_PREFIX_DELIM "#"
+
+#define LOOKUP_FIELDS_COMMON \
+unsigned char prefix_len : 4;
+#define HR_PREFIX_LEN_MAX 16
+
 #ifndef HR_TABLE_ARRAY
 typedef HV* HR_Table_t;
 #else
 typedef AV* HR_Table_t;
-#warning "Using Array!"
 #endif
 
 #define REF2TABLE(tbl) \

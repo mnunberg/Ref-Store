@@ -1,7 +1,8 @@
 #include "hreg.h"
 #include "hrpriv.h"
 #include <perl.h>
-
+#undef NDEBUG
+#include <assert.h>
 
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
@@ -92,25 +93,30 @@ static inline HR_Action* action_find_similar(
         
         /*Container Matches*/
         if(ktype == HR_KEY_TYPE_NULL) {
+            HR_DEBUG("Returning OK on container match");
             return cur;
         }
         
         switch(ktype) {
             case HR_KEY_STYPE_PTR_RV:
                 if(action_key_is_rv(cur)) {
-                    assert(SvROK((SV*)cur->key));
+                    assert(SvROK((SV*)cur->key) && SvROK((SV*)key));
                     if(SvRV((SV*)cur->key) == (SV*)key) {
+                        HR_DEBUG("SvRV comparison matches. Returning OK");
                         return cur;
                     }
                 }
                 break;
             case HR_KEY_TYPE_PTR:
                 if((char*)key == cur->key) {
+                    HR_DEBUG("Pointer Address %p matches. Returning OK",
+                             key);
                     return cur;
                 }
                 break;
             case HR_KEY_TYPE_STR:
                 if(strcmp((char*)key, cur->key) == 0) {
+                    HR_DEBUG("String comparison matches. Returning OK");
                     return cur;
                 }
                 break;
@@ -221,27 +227,28 @@ HR_del_action(HR_Action *action_list, SV *hashref, void *key, HR_KeyType_t ktype
 {
     HR_Action *cur = action_list, *last = action_list;
     cur = action_find_similar(action_list, hashref, key, ktype, &last);
-        
+    
     if(!cur) {
         HR_DEBUG("Nothing to delete");
         return HR_ACTION_NOT_FOUND;
     }
     
+    
+    /*Action is first action, and there are no others*/
     if(cur == action_list) {
-        cur->hashref = NULL;
-        return HR_ACTION_EMPTY;
-    }
-        
-    /*First action, but there are more*/
-    if(last == cur && cur->next) {
-        /*Copy over next entry to the first entry, and free the *next* pointer*/
-        HR_DEBUG("Shifting first action...");
-        HR_Action *nextp = cur->next;
-        assert(last == cur == action_list);
-        action_sanitize(cur);
-        Copy(nextp, last, 1, HR_Action);
-        Free_Action(nextp);
-        return HR_ACTION_DELETED;
+        if(cur->next == NULL) {
+            HR_DEBUG("Detected empty action list");
+            cur->hashref = NULL;
+            return HR_ACTION_EMPTY;
+        } else {
+            assert(last == cur && cur == action_list);
+            HR_DEBUG("Shifting first action...");
+            HR_Action *nextp = cur->next;
+            action_sanitize(cur);
+            Copy(nextp, last, 1, HR_Action);
+            Free_Action(nextp);
+            return HR_ACTION_DELETED;
+        }
     } else {
         HR_DEBUG("Delete %p hashref=%p", cur, cur->hashref);
         action_sanitize(cur);

@@ -12,6 +12,7 @@
 
 
 #define ATTR_FIELDS_COMMON \
+    LOOKUP_FIELDS_COMMON \
     SV *table; \
     HV *attrhash; \
     unsigned char encap;
@@ -25,8 +26,6 @@ typedef struct {
     SV *obj_rv;
     char *obj_paddr;
 } hrattr_encap;
-
-#define KT_DELIM "#"
 
 #define attr_parent_tbl(attr) (HR_Table_t)(attr->table)
 
@@ -115,6 +114,16 @@ char *HRXSATTR_kstring(SV *self)
     return ret;
 }
 
+SV *HRXSATTR_encap_ukey(SV *self)
+{
+    return newSVsv(attr_encap_cast(attr_from_sv(SvRV(self)))->obj_rv);
+}
+
+UV HRXSATTR_prefix_len(SV *self)
+{
+    return (attr_from_sv(SvRV(self)))->prefix_len;
+}
+
 static inline SV*
 attr_get(SV *self, SV *attr, char *t, int options)
 {
@@ -129,8 +138,9 @@ attr_get(SV *self, SV *attr, char *t, int options)
     
     HR_BlessParams stash_params;
     
-    int attrlen = 0;
-    int on_heap = 0;
+    int attrlen     = 0;
+    int on_heap     = 0;
+    int prefix_len  = 0;
     
     get_hashes(REF2TABLE(self),
                HR_HKEY_LOOKUP_ATTR, &attr_lookup,
@@ -155,7 +165,7 @@ attr_get(SV *self, SV *attr, char *t, int options)
         attr_ustr = SvPV_nolen(attr);
     }
     
-    attrlen += sizeof(KT_DELIM) - 1;
+    attrlen += sizeof(HR_PREFIX_DELIM) - 1;
     
     if(attrlen > 128) {
         on_heap = 1;
@@ -166,11 +176,14 @@ attr_get(SV *self, SV *attr, char *t, int options)
     
     *attr_fullstr = '\0';
     
-    sprintf(attr_fullstr, "%s%s%s", SvPV_nolen(*kt_ent), KT_DELIM, attr_ustr);
+    sprintf(attr_fullstr, "%s%s%s", SvPV_nolen(*kt_ent), HR_PREFIX_DELIM, attr_ustr);
     HR_DEBUG("ATTRKEY=%s", attr_fullstr);
     
     a_ent = hv_fetch(REF2HASH(attr_lookup), attr_fullstr, attrlen-1, 0);
     if(!a_ent) {
+        
+        prefix_len = strlen(t);
+        
         if( (options & STORE_OPT_O_CREAT) == 0) {
             HR_DEBUG("Could not locate attribute and O_CREAT not specified");
             goto GT_RET;
@@ -195,6 +208,7 @@ attr_get(SV *self, SV *attr, char *t, int options)
         
         /*Actual attribute entry is ALWAYS weak and is entirely dependent on vhash
          entries*/
+        (attr_from_sv(SvRV(aobj)))->prefix_len = prefix_len;
         assert(a_ent);
         sv_rvweaken(*a_ent);
     } else {
@@ -664,7 +678,7 @@ void HRXSATTR_ithread_postdup(SV *newself, SV *newtable, HV *ptr_map)
         /*We also need to change our key string...*/
         char *oldstr = attr_strkey(aencap, sizeof(hrattr_encap));
         
-        char *oldptr = strrchr(oldstr, KT_DELIM[0]);
+        char *oldptr = strrchr(oldstr, HR_PREFIX_DELIM[0]);
         
         assert(oldptr);
         HR_DEBUG("Old attr string: %s", oldstr);

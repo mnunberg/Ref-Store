@@ -32,10 +32,10 @@ use warnings;
 
 use Data::Dumper;
 use Getopt::Long;
+use Ref::Store::Common;
 use Log::Fu { level=> "debug", target => \*STDOUT };
 use lib "/home/mordy/src/Ref-Store/lib";
 
-use Ref::Store::Common;
 use Benchmark qw(:all);
 use Module::Stubber 'Memory::Usage' => [],
 	will_use => { state => sub { [] } };

@@ -5,6 +5,7 @@ our $AUTOLOAD;
 use Log::Fu;
 use Carp qw(confess);
 use Data::Dumper;
+use Ref::Store::Common;
 
 $SIG{__DIE__} = \&confess;
 BEGIN {
@@ -21,21 +22,17 @@ BEGIN {
 			*{$wrapname} = sub {
 				my @args = @_;
 				my $self = $args[0];
-				#print Dumper(\@args);
 				my ($ktarg) = splice(@args, 2, 1);
-				#log_err($ktarg);
-				#log_err(@args);
 				my $pfix = $self->get_kt_prefix($ktarg, "$fname: Can't find prefix ($ktarg)!");
 				my $orig = $args[1];
 				die "Must have defined key!" unless defined $orig;
 				if(!ref $orig) {
-					$orig = $pfix . $orig;
+					$orig = $pfix . HR_PREFIX_DELIM . $orig;
 					$args[1] = $orig;
 				} else {
 					log_warn("Using keytypes with object key has no effect");
 				}
 				shift @args;
-				#print Dumper($self);
 				return $self->$fname(@args);
 			};
 		}

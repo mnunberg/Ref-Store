@@ -30,6 +30,7 @@ use Test::More;
 use Data::Dumper;
 use Log::Fu;
 use Devel::Peek qw(Dump);
+use blib;
 
 our $Impl;
 
@@ -82,7 +83,15 @@ sub test_multiple_hashes {
             $results++;
         }
     }
+    
     is($results, 2, "Storage in multiple HR objects");
+    $hashes[1]->store('key', $obj, StrongValue => 1);
+    $hashes[0]->store('key', $obj);
+    weaken($obj);
+    ok($hashes[1]->fetch('key') && $hashes[0]->fetch('key'), "Different retention policies");    
+    $hashes[0]->store($obj,\do { my $o },StrongValue => 1);
+    $hashes[1]->unlink('key');
+    ok($hashes[0]->is_empty() && $hashes[1]->is_empty, "Global Deletion");
 }
 
 sub test_object_keys {
@@ -157,10 +166,10 @@ sub test_object_attr {
     #print Dumper($hash);
     
     
-    diag "Destroying $attr";
+    note "Destroying $attr";
     undef $attr;
     
-    diag "Trying object GC";
+    note "Trying object GC";
     {
         my $tmpattr = KeyObject->new();
         $hash->store_a($tmpattr, $t, $v);
@@ -175,7 +184,95 @@ sub test_object_attr {
     ok(!($hash->has_value($v)||$hash->has_attr($attr,$t)),
        "Attribute object Value GC");
     #print Dumper($hash);
-    diag "Attribute tests done";
+    note "Attribute tests done";
+    #print Dumper($hash);
+}
+
+sub test_multilookup_attrobj {
+    my $rs = $Impl->new();
+    $rs->register_kt('foo');
+    $rs->register_kt('bar');
+    my $attrobj = KeyObject->new();
+    
+    my $foo_obj = ValueObject->new();
+    my $bar_obj = ValueObject->new();
+    
+    $rs->store_a($attrobj, 'foo', $foo_obj);
+    $rs->store_a($attrobj, 'bar', $bar_obj);
+    $rs->store($attrobj, $foo_obj);
+    $rs->unlink($attrobj);
+    
+    my @bar_list = $rs->fetch_a($attrobj, 'bar');
+    my @foo_list = $rs->fetch_a($attrobj, 'foo');
+    
+    is(grep($_ == $bar_obj, @foo_list), 0, "Bar not in Foo lookup");
+    is(grep($_ == $foo_obj, @bar_list), 0, "Foo not in Bar lookup");
+    undef $attrobj;
+    ok($rs->is_empty, "Deletion for both lookups");
+    ok(1, "Bonus points. We also used the same object as a key lookup");
+}
+
+sub test_cyclical {
+    $Data::Dumper::Deepcopy = 1;
+    my $rs = $Impl->new();
+    my $kobj = KeyObject->new();
+    my $vobj = ValueObject->new();
+    {
+        $rs->store($kobj, $vobj);
+        $rs->store($vobj, $kobj);
+    }
+    
+    #print Dumper($rs->Dumperized);
+    
+    $rs->purge($vobj);
+    ok(!$rs->vexists($vobj), sprintf("Value %x (%d) no longer valid", $vobj+0, $vobj+0));
+    #undef $vobj;
+    $vobj = undef;
+    
+    ok(!$rs->vexists($kobj), "Key no longer value");
+    #print Dumper($rs->Dumperized);    
+}
+
+sub test_purge {
+    my $rs = $Impl->new();
+    $rs->register_kt('attr');
+    
+    my $vobj = ValueObject->new();
+    my $kobj = KeyObject->new();
+    my $attrobj = KeyObject->new();
+    
+    $rs->store('scalar_key', $vobj);
+    $rs->store($kobj, $vobj);
+    $rs->store_a($attrobj, 'attr', $vobj, StrongValue => 1);
+    $rs->store_a('other_attr', 'attr', $vobj, StrongAttr => 1); #StrongAttr should be noop
+    
+    #Switch keys and values, for dramatic effect
+    diag "Reverse-storing for dramatic effect";
+    $rs->store($vobj, $kobj);
+    
+    note "purge()ing";
+    
+    $rs->purge($vobj);
+    
+    note "purged";
+    
+    ok(!(
+        $rs->fetch('scalar_key') ||
+        $rs->fetch($kobj) ||
+        $rs->fetch_a($attrobj, 'attr') ||
+        $rs->fetch_a('other_attr', 'attr')
+    ), "Object as value deleted");
+    
+    ok(!$rs->vexists($vobj), "Value not present at all");
+    note "About to undef $vobj";
+    note "Reverse Lookup:", $rs->reverse;
+    
+    weaken($vobj);
+    is($vobj, undef, "No more remaining references");
+    
+    $Data::Dumper::Deepcopy = 1;
+    #print Dumper($rs->Dumperized);
+    ok($rs->is_empty, "Purge");
 }
 
 use constant {
@@ -185,7 +282,7 @@ use constant {
     KEY_MEH  => '_key_meh'
 };
 sub test_chained_basic {
-    diag "Chained tests";
+    note "Chained tests";
     my $hash = $Impl->new();
     
     ValueObject->reset_counter();
@@ -229,7 +326,7 @@ sub test_threads {
         diag "Not testing threads. Couldn't load threads.pm";
         return;
     }
-    diag "Testing threads (String keys)";
+    note "Testing threads (String keys)";
     my $table = $Impl->new();
     my $v = ValueObject->new();
     my $k = "some_key";
@@ -249,7 +346,7 @@ sub test_threads {
     #undef $thr;
     
     ############################################################################
-    diag "Testing threads (object keys)";
+    note "Testing threads (object keys)";
     
     my $ko = KeyObject->new();
     $table->store_sk($ko, $v);
@@ -264,7 +361,7 @@ sub test_threads {
     ok($thr->join(),"Thread duplication for encapsulated object keys");
     #undef $thr;
     
-    diag "Testing thread duplication with dual (key and/or value) objects";
+    note "Testing thread duplication with dual (key and/or value) objects";
     #undef $table;
     #$table = $Impl->new();
     my $k_first = KeyObject->new();
@@ -283,14 +380,14 @@ sub test_threads {
     ok($fn->(), "Ok in parent");
     ok($thr->join(), "Ok in thread!");
     
-    diag "About to undef table";
+    note "About to undef table";
     
     $table->purge($_) foreach ($k_first,$v_first,$v_second);
     undef $table;
     
     $table = $Impl->new();
     
-    diag "Will test attributes";
+    note "Will test attributes";
     $table->register_kt("ATTR");
     $table->store_a(1, "ATTR", $v);
     
@@ -310,7 +407,7 @@ sub test_threads {
 
     ok($thr->join(), "Attribute Object");
 
-    diag("Returning..");
+    note("Returning..");
 }
 
 
@@ -327,15 +424,16 @@ sub just_wondering {
         pipe my($rfd,$wfd);
         $rs->store_a(1, 'rfds', $rfd);
         $rs->store_a(1, 'wfds', $wfd);
-        $rs->store($rfd, $wfd, StrongKey => 1);
+        $rs->store($rfd, $wfd, StrongKey => 1, StrongValue => 1);
     }
+    ok($rs->fetch_a(1, 'wfds'));
     foreach my $wfd ($rs->fetch_a(1, 'wfds')) {
-        diag "Printing to $wfd";
+        note "Printing to $wfd";
         syswrite($wfd, "$wfd\n");
     }
     foreach my $rfd ($rs->fetch_a(1, 'rfds')) {
         my $input = sysread($rfd, my $buf, 4096);
-        diag "Got input $buf";
+        note "Got input $buf";
         $rs->purgeby($rfd);
     }
     #diag "Done!";
@@ -379,31 +477,119 @@ sub retention {
     
 }
 
+sub test_kt {
+    my $rs = $Impl->new();
+    $rs->register_kt('foo');
+    $rs->register_kt('bar');
+    my $foo_obj = ValueObject->new();
+    my $bar_obj = ValueObject->new();
+    $rs->store_kt(42, 'foo', $foo_obj);
+    $rs->store_kt(42, 'bar', $bar_obj);
+    is($rs->fetch_kt(42, 'foo'), $foo_obj);
+    is($rs->fetch_kt(42, 'bar'), $bar_obj);
+}
+
+sub test_iter {
+    use Ref::Store qw(:ref_store_constants);
+    my $rs = $Impl->new();
+    $rs->register_kt('attr');
+    $rs->register_kt('keytype');
+    
+    my $attrobj = KeyObject->new();
+    my $vobj    = ValueObject->new();
+    my $kobj    = KeyObject->new();
+    
+    $rs->store_kt('simple_key', 'keytype', $vobj);
+    $rs->store_kt($kobj, 'keytype', $vobj);
+    $rs->store_a($attrobj, 'attr', $vobj);
+    
+    my %seen_hash;
+    
+    $rs->iterinit();
+    while( my ($lt,$pfix,$key,$obj) = $rs->iter() ) {
+        note sprintf("TYPE=%s, PREFIX=%s, KEY=%s, OBJ=%s",
+           ref_store_constants_to_str($lt), $pfix, $key, $obj);
+        my $obj_s = $obj;
+        if($lt == REF_STORE_ATTRIBUTE) {
+            $obj_s = $obj->[0];
+        }
+        $seen_hash{$lt.$pfix.$key.$obj_s} = 1;
+    }
+    ok($seen_hash{REF_STORE_KEY . 'keytype' . 'simple_key' . $vobj});
+    ok($seen_hash{REF_STORE_KEY . '' . $kobj . $vobj });
+    ok($seen_hash{REF_STORE_ATTRIBUTE . 'attr' . $attrobj . $vobj });
+}
+
+sub misc_api {
+    my $rs = $Impl->new();
+    $rs->register_kt('some_attr');
+    my @objs = map { \do { $_ } } (0..10);
+    
+    $rs->store($$_, $_, StrongValue => 1) for @objs;
+    my @vlist = $rs->vlist;
+    my $ok = 1;
+    foreach my $obj (@objs) {
+        if(!grep $_, @vlist) {
+            $ok = 0;
+        }
+    }
+    ok($ok, "Got all values from vlist()");
+    $ok = 1;
+    foreach my $obj (@objs) {
+        if(!$rs->vexists($obj)) {
+            $ok = 0;
+        }
+    }
+    ok($ok, "All values ok with vexists()");
+    $rs->purge($_) foreach @objs;
+    ok($rs->is_empty(), "Table is empty");
+    
+    
+}
+
 sub test_all {
     eval "require $Impl";
-    test_scalar_key();
-    test_multiple_hashes();
-    test_object_keys();
-    test_object_keys2();
-    test_scalar_attr();
-    test_object_attr();
-    test_chained_basic();
-    test_oexcl();
-    if($Impl =~ /XS/) {
-        test_threads();
-        diag 'thread tests done';
-    } else {
-        diag "Threads are only supported by XS backend";
+    subtest "Simple Scalar Keys"            => \&test_scalar_key;
+    subtest "Object Keys - Basic tests"     => \&test_object_keys;
+    subtest "Object Keys - Extended tests"  => \&test_object_keys2;
+
+    subtest "Scalar Attributes"             => \&test_scalar_attr;
+    subtest "Object Attributes"             => \&test_object_attr;
+    subtest "Multi Lookup Attribute Objects"=> \&test_multilookup_attrobj;
+
+    subtest "Chained Object Graphs"         => \&test_chained_basic;
+
+    subtest "Duplicate Errors"              => \&test_oexcl;
+    subtest "Typed Keys"                    => \&test_kt;
+    
+    SKIP : {
+        skip "PP Backend is crappy", 2 unless $Impl !~ /PP/;
+        subtest "Purge"                         => \&test_purge;
+        subtest "Cyclical Keys"                 => \&test_cyclical;
+
     }
     
-    just_wondering();
+    SKIP : {
+        skip "Only implemented in XS", 1 unless $Impl =~ /XS/;
+        subtest "Iteration"                 => \&test_iter;
+    }
     
-    #if($Impl !~ /Sweep/) {
-    #    done_testing();
-    #} else {
-    #    diag "Skipping thread tests for sweeping implementation";
-    #}
-    retention();
+    SKIP : {
+        skip "Perl not threaded", 1 unless $can_use_threads;
+        if($Impl =~ /XS/) {
+            test_threads();
+        } else {
+            TODO: {
+                todo_skip "PP Backend doesn't support threads", 1;
+                subtest "Threads (PP)"  => \&test_threads;
+            };
+        }
+    };
+    
+    subtest "Simple use case (Filehandle tracking" =>\&just_wondering;
+    subtest "Retention Policy"              =>\&retention;
+    subtest "Debug/Info API"                => \&misc_api;
+    subtest "Multiple table sanity check"   => \&test_multiple_hashes;
     done_testing();
 }
 1;

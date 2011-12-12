@@ -1,25 +1,26 @@
 package Ref::Store::ThreadUtil::OldLookups;
 use strict;
 use warnings;
+use Ref::Store::Common;
+
 my @Lookups;
 BEGIN {
     @Lookups = qw(forward reverse attr_lookup scalar_lookup);
 }
-use Class::XSAccessor {
-    constructor => '_real_new',
-    accessors => [@Lookups]
-};
+use Class::XSAccessor::Array
+    accessors => { %Ref::Store::Common::LookupNames };
 
 sub new {
     my ($cls,$old_table) = @_;
     my %options = ();
-    foreach my $k (@Lookups) {
-        $options{$k} = { %{ $old_table->{$k} } };
+    my $self = [];
+    foreach my $idx (
+        HR_TIDX_RLOOKUP, HR_TIDX_FLOOKUP,
+        HR_TIDX_ALOOKUP, HR_TIDX_SLOOKUP) {
+        $self->[$idx] = { %{$old_table->[$idx]} };
     }
-    $cls->_real_new(%options);
+    bless $self, $cls;
 }
-
-
 
 package Ref::Store::ThreadUtil;
 use strict;

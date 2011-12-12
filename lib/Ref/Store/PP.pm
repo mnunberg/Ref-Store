@@ -19,8 +19,8 @@ sub new {
     $table->scalar_lookup->{$scalar} = $self;
     weaken($table->scalar_lookup->{$scalar});
     
-    hr_pp_trigger_register($self, "$scalar", $table->forward);
-    hr_pp_trigger_register($self, "$scalar", $table->scalar_lookup);
+    hr_pp_trigger_register($self,$table->forward,"$scalar");
+    hr_pp_trigger_register($self,$table->scalar_lookup,"$scalar");
     return $self;
 }
 
@@ -55,7 +55,7 @@ sub new {
         ($obj+0, $obj, $table);
     
     #log_err("Creating new encapsulating key for object", $obj+0);
-    hr_pp_trigger_register($obj, $obj+0, $table->scalar_lookup);
+    hr_pp_trigger_register($obj, $table->scalar_lookup,$obj+0);
     
     weaken($table->scalar_lookup->{$obj+0} = $self);
     
@@ -103,7 +103,7 @@ sub link_value {
     my ($self,$value) = @_;
     my $obj = $self->[HR_KFLD_REFSCALAR];
     my $stored_privhash = $self->[HR_KFLD_TABLEREF]->reverse->{$value+0};
-    hr_pp_trigger_register($obj, $obj+0, $stored_privhash);
+    hr_pp_trigger_register($obj, $stored_privhash, $obj+0);
 }
 
 sub unlink_value {
@@ -206,28 +206,33 @@ sub new_key {
 sub dref_add {
     my ($self,$value,$target,$key) = @_;
     $key ||= $value+0;
-    hr_pp_trigger_register($value, $key, $target);
+    hr_pp_trigger_register($value,$target,$key);
 }
 
 sub dref_del {
-    my ($self,$value,$target) = @_;
-    hr_pp_unregister($value, $target);
-}
-
-sub dref_add_str {
     my ($self,$value,$target,$key) = @_;
-    hr_pp_trigger_register($value, $key, $target);
+    hr_pp_trigger_unregister($value, $target, $key);
 }
 
-sub dref_add_ptr {
-    my ($self,$value,$target) = @_;
-    hr_pp_trigger_register($value, $value+0, $target);
-}
+*dref_add_str = \&dref_add;
+*dref_add_ptr = \&dref_add;
 
-sub dref_del_ptr {
-    my ($self,$value,$target,$mkey) = @_;
-    hr_pp_trigger_unregister($value,$target,$mkey);
-}
+*dref_del_ptr = \&dref_del;
+
+#sub dref_add_str {
+#    my ($self,$value,$target,$key) = @_;
+#    hr_pp_trigger_register($value, $key, $target);
+#}
+#
+#sub dref_add_ptr {
+#    my ($self,$value,$target) = @_;
+#    hr_pp_trigger_register($value, $value+0, $target);
+#}
+#
+#sub dref_del_ptr {
+#    my ($self,$value,$target,$mkey) = @_;
+#    hr_pp_trigger_unregister($value,$target,$mkey);
+#}
 
 sub ithread_store_lookup_info {
     my ($self,$ptr_map) = @_;

@@ -4,13 +4,17 @@ use warnings;
 use Ref::Store::Common;
 use Ref::Store::XS::cfunc;
 
-*new = \&HRXSK_new;
-*kstring = \&HRXSK_kstring;
+*new                    = \&HRXSK_new;
+*kstring                = \&HRXSK_kstring;
+*prefix_len             = \&HRXSK_prefix_len;
+
 sub weaken_encapsulated { }
 sub unlink_value { }
 sub link_value { }
 sub ithread_predup {}
-*ithread_postdup = \&HRXSK_ithread_postdup;
+sub ukey {}
+
+*ithread_postdup        = \&HRXSK_ithread_postdup;
 
 package Ref::Store::XS::Key::Encapsulating;
 use strict;
@@ -26,9 +30,12 @@ sub unlink_value { }
 #*link_value             = \&HRXSK_encap_link_value;
 
 *kstring                = \&HRXSK_encap_kstring;
+*prefix_len             = \&HRXSK_prefix_len;
 
 *ithread_predup         = \&HRXSK_encap_ithread_predup;
 *ithread_postdup        = \&HRXSK_encap_ithread_postdup;
+
+*ukey                   = \&HRXSK_encap_getencap;
 
 sub dump {
     my ($self,$hrd) = @_;
@@ -45,11 +52,16 @@ use Ref::Store::XS::cfunc;
 *unlink_value   = \&HRXSATTR_unlink_value;
 *get_hash       = \&HRXSATTR_get_hash;
 *kstring        = \&HRXSATTR_kstring;
+*prefix_len     = \&HRXSATTR_prefix_len;
 *ithread_predup = \&HRXSATTR_ithread_predup;
 *ithread_postdup= \&HRXSATTR_ithread_postdup;
 
-@Ref::Store::XS::Attribute::Encapsulating::ISA
-    = qw(Ref::Store::XS::Attribute);
+sub ukey { }
+
+package Ref::Store::XS::Attribute::Encapsulating;
+use Ref::Store::XS::cfunc;
+our @ISA = qw(Ref::Store::XS::Attribute);
+*ukey           = \&HRXSATTR_encap_ukey;
 
 package Ref::Store::XS;
 use strict;
@@ -65,6 +77,7 @@ use Log::Fu;
 
 *store = *store_sk  = \&HRA_store_sk;
 *fetch = *fetch_sk  = \&HRA_fetch_sk;
+*store_kt           = \&HRA_store_kt;
 
 *store_a            = \&HRA_store_a;
 *fetch_a            = \&HRA_fetch_a;
@@ -72,6 +85,7 @@ use Log::Fu;
 *unlink_a           = \&HRA_unlink_a;
 *attr_get           = \&HRA_attr_get;
 *ithread_store_lookup_info = \&HRA_ithread_store_lookup_info;
+
 
 sub new_key {
     my ($self,$scalar) = @_;
@@ -96,8 +110,14 @@ sub dref_add_str {
 }
 
 sub dref_del_ptr {
-    my ($self,$value,$hashref) = @_;
-    HR_PL_del_action_container($value, $hashref);
+    my ($self,$value,$hashref,$arg) = @_;
+    if(@_ == 3) {
+        HR_PL_del_action_container($value, $hashref);
+    } elsif(@_ == 4) {
+        HR_PL_del_action_ptr($value, $hashref, $arg);
+    } else {
+        die("Need either 2 or 3 arguments, got ", (scalar @_) - 1);
+    }
 }
 
 

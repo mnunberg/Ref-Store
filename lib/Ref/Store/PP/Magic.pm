@@ -39,16 +39,21 @@ sub hr_pp_purge {
 }
 
 sub trigger_fire {
-    #log_err("FIRE!");
     my ($ref,$actions) = @_;
-
     foreach (@$actions) {
         my ($key,$target) = @$_;
-        next unless defined $target && defined $key;
+                
+        unless (defined $target && defined $key) {
+            next;
+        }
+        
         if(reftype $target eq       'HASH') {
+            if(ref $key) {
+                $key = $key+0;
+            }
             delete $target->{$key};
         } elsif (reftype $target eq 'ARRAY') {
-            delete $target->[$key];
+            delete $target->[$key+0];
         } elsif (reftype $target eq 'CODE') {
             $target->($ref,$key);
         } else {
@@ -59,20 +64,23 @@ sub trigger_fire {
 }
 
 sub hr_pp_trigger_unregister {
-    my ($ref,$what,$mkey) = @_;
-    
-    if(!defined $what) {
+    my ($ref,$target,$key) = @_;
+    if(!defined $target) {
         if(in_global_destruction) {
             return;
         }
-        die("Container (what) must be defined");
     }
+    
     my $actions = &getdata($ref, $Wizard);
     return unless $actions;
+    
     my $i = $#{$actions};
+    
     while($i >= 0) {
-        my ($key,$target) = @{$actions->[$i]};
-        if(defined $target && $target eq $what && $key eq $mkey) {
+        my ($ekey,$etarget) = @{$actions->[$i]};
+        if(defined $etarget && $target eq $etarget &&
+           (!defined $key) || ($key eq $ekey))
+        {    
             splice(@{$actions}, $i);
             last;
         }
@@ -86,7 +94,7 @@ sub hr_pp_trigger_unregister {
 
 sub hr_pp_trigger_register {
     
-    my ($ref,$key,$target) = @_;    
+    my ($ref,$target,$key) = @_;
     my $data = &getdata($ref, $Wizard);
     my $datum = [];
     @$datum[IDX_KEY,IDX_TARGET] = ($key,$target);
@@ -112,27 +120,27 @@ sub hr_pp_trigger_register {
 use Carp qw(cluck);
 
 #This one exists primarily for thread duplication
-sub hr_pp_trigger_replace_key {
-    my ($ref,$key,$target,$newkey) = @_;
-        
-    my $data = &getdata($ref,$Wizard);
-    if(!$data) {
-        cluck("");
-        log_warn("No data yet? ($ref)");
-        hr_pp_trigger_register($ref,$key,$target);
-        log_warn("Casted!");
-        return;
-    }
-    
-    foreach (@$data) {
-        my ($ekey,$etarget) = @$_;
-        if($etarget == $target && $ekey eq $key) {
-            $_->[IDX_KEY] = $key;
-            weaken($_->[IDX_KEY]) if ref $key;
-            return;
-        }
-    }
-    hr_pp_trigger_register($ref,$key,$target);
-}
+#sub hr_pp_trigger_replace_key {
+#    my ($ref,$key,$target,$newkey) = @_;
+#        
+#    my $data = &getdata($ref,$Wizard);
+#    if(!$data) {
+#        cluck("");
+#        log_warn("No data yet? ($ref)");
+#        hr_pp_trigger_register($ref,$key,$target);
+#        log_warn("Casted!");
+#        return;
+#    }
+#    
+#    foreach (@$data) {
+#        my ($ekey,$etarget) = @$_;
+#        if($etarget == $target && $ekey eq $key) {
+#            $_->[IDX_KEY] = $key;
+#            weaken($_->[IDX_KEY]) if ref $key;
+#            return;
+#        }
+#    }
+#    hr_pp_trigger_register($ref,$key,$target);
+#}
 
 1;
