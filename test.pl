@@ -33,6 +33,8 @@ use warnings;
 use Data::Dumper;
 use Getopt::Long;
 use Ref::Store::Common;
+use Carp::Heavy;
+
 use Log::Fu { level=> "debug", target => \*STDOUT };
 use lib "/home/mordy/src/Ref-Store/lib";
 
@@ -57,11 +59,38 @@ $count ||= 50;
 $Mode ||= 'all';
 
 my $cur_cycle = 0;
+my $_mu;
+
+if($^O !~ /linux/i) {
+	log_warn("Can't run Memory::Usage on non-linux systems (procfs needed)");
+} else {
+	$_mu = Memory::Usage->new();
+}
+
+sub memusage_log {
+	return unless defined $_mu;
+	my $label = shift;
+	$_mu->record($label);
+}
+
+sub memusage_dump {
+	return unless defined $_mu;
+	#Dump memory usage information:
+	log_info("Dumping memory usage statistics");
+	my $mpriv = 0;
+	printf STDERR ("%-40s %6s\t %6s\n", "State", "RSS", "DIFF");
+	foreach my $st (@{$_mu->state()}) {
+		my ($msg,$rss) = @{$st}[1,3];
+		$rss /= 1024;
+		my $diff = $rss - $mpriv;
+		printf STDERR ("%-40s %6dMB\t %6d\n", $msg, $rss, $diff);
+		$mpriv = $rss;
+	}
+}
 
 my $i_BEGIN = 1;
 my $i_END = $count;
-my $Mu = Memory::Usage->new();
-$Mu->record("BEGIN");
+memusage_log("Begin");
 sub single_pass {
 	my $Hash = $Htype->new();
 	my ($impl_s) = (split(/::/, $Htype))[-1];
@@ -72,7 +101,7 @@ sub single_pass {
 		@olist = map { ValueObject->new() } ($i_BEGIN..$i_END);
 	}, "Object Creation");
 	
-	$Mu->record("$mu_prefix Objects Created");
+	memusage_log("$mu_prefix Objects Created");
 	
 	if($Mode =~ /key|all/i ) {
 		timethis(1, sub {
@@ -88,7 +117,7 @@ sub single_pass {
 		
 		log_infof("Have %d objects now", $ValueObject::ObjectCount);
 		
-		$Mu->record("$mu_prefix Key storage");
+		memusage_log("$mu_prefix Key storage");
 		
 		timethis(1, sub {
 			foreach my $i($i_BEGIN..$i_END) {
@@ -113,7 +142,7 @@ sub single_pass {
 	if($Mode =~ /objk|all/i) {
 		@klist = map { KeyObject->new() } (0..$i_END-1);
 		@klist2 = map { KeyObject->new() } (0..$i_END-1);
-		$Mu->record("$mu_prefix ObjK created");
+		memusage_log("$mu_prefix ObjK created");
 		
 		timethis(1, sub {
 			foreach my $i (0..$i_END-1) {
@@ -121,7 +150,7 @@ sub single_pass {
 				$Hash->store($klist2[$i], $olist[$i]);
 			}
 		}, "Object Key (STORE)");
-		$Mu->record("$mu_prefix ObjK Store");
+		memusage_log("$mu_prefix ObjK Store");
 		
 		timethis(1, sub {
 			foreach my $i (0..$i_END-1) {
@@ -151,7 +180,7 @@ sub single_pass {
 				$Hash->store_a(@$_, $o) foreach @attrpairs;
 			}
 		}, "Attribute (STORE)");
-		$Mu->record("$mu_prefix Attribtue Storage");
+		memusage_log("$mu_prefix Attribtue Storage");
 		
 		my $result_count = 0;
 		timethis(1, sub {
@@ -230,19 +259,8 @@ foreach (1..$Cycles) {
 	}
 }
 
-#Dump memory usage information:
-log_info("Dumping memory usage statistics");
-my $mpriv = 0;
-printf STDERR ("%-40s %6s\t %6s\n", "State", "RSS", "DIFF");
-foreach my $st (@{$Mu->state()}) {
-	my ($msg,$rss) = @{$st}[1,3];
-	$rss /= 1024;
-	my $diff = $rss - $mpriv;
-	printf STDERR ("%-40s %6dMB\t %6d\n", $msg, $rss, $diff);
-	$mpriv = $rss;
-}
+memusage_dump();
 
-undef $Mu;
 use Scalar::Util qw(weaken);
 
 sub compare_simple {
