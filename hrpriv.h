@@ -95,6 +95,7 @@ refcnt_ka_end(SV *sv, U32 old_refcount)
     }
 }
 
+
 #define HR_PREFIX_DELIM "#"
 
 #define LOOKUP_FIELDS_COMMON \
@@ -174,6 +175,47 @@ get_vhash_from_rlookup(SV *rlookup, SV *vaddr, int create)
     }
     
     return href;
+}
+
+
+/*This will insert a key object into the value's vhash.
+ It will create the vhash if it does not exist
+ It will use the existing rlookup, if found, or fetch it from the
+ table using get_hashes().
+*/
+
+HR_INLINE int
+insert_into_vhash(
+    SV *vref,
+    SV *lobj,
+    char *kstring,
+    HR_Table_t table,
+    SV *rlookup
+    )
+{
+    SV **stored;
+    SV *vhash;
+    SV *vaddr = newSVuv((UV)SvRV(vref));
+    int created;
+    
+    if(!rlookup) {
+        get_hashes(table, HR_HKEY_LOOKUP_REVERSE, &rlookup,
+                   HR_HKEY_LOOKUP_NULL);
+    }
+    vhash = get_vhash_from_rlookup(rlookup, vaddr, VHASH_INIT_FULL);
+    
+    stored = hv_fetch(REF2HASH(vhash), kstring, strlen(kstring), 1);
+    if(!SvROK(*stored)) {
+        created = 1;
+        HR_DEBUG("Creating new reverse entry..");
+        new_hashval_ref(*stored, SvRV(lobj));
+        SvREFCNT_inc(SvRV(lobj));
+    } else {
+        created = 0;
+    }
+    
+    SvREFCNT_dec(vaddr);   
+    return created;
 }
 
 HR_INLINE HV*

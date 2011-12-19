@@ -22,7 +22,7 @@ lib/Ref/Store/PROTOSPEC.pod
 
 t/00-impl_xs.t
 t/common.pm
-t/00-impl_pp.t
+t/threadtests.pm
 test.pl
 
 hreg.c

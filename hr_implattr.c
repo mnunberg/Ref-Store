@@ -61,11 +61,7 @@ attr_new_common(char *pkg, char *key, SV *table, int attrsize)
     hrattr_simple *attr = attr_from_sv(SvRV(self));
     char *key_offset = attr_strkey(attr, attrsize);
     Copy(key, key_offset, keylen, char);
-#ifdef HR_MAKE_PARENT_RV
-    attr->table = newSVsv(table)
-#else
     attr->table = SvRV(table);
-#endif
     attr->attrhash = newHV();
     attr->encap = 0;
     
@@ -104,7 +100,11 @@ static inline SV
 SV  *HRXSATTR_get_hash(SV *self)
 {
     hrattr_simple *attr = attr_from_sv(SvRV(self));
-    return newRV_inc((SV*)attr->attrhash);
+    if(attr->attrhash) {
+        return newRV_inc((SV*)attr->attrhash);
+    } else {
+        return &PL_sv_undef;
+    }
 }
 
 char *HRXSATTR_kstring(SV *self)
@@ -225,15 +225,14 @@ attr_get(SV *self, SV *attr, char *t, int options)
 
 void HRA_store_a(SV *self, SV *attr, char *t, SV *value, ...)
 {
-    SV *rlookup = NULL; //reverse lookup table
     SV *vstring = newSVuv((UV)SvRV(value)); //reverse lookup key
-    SV *vhash   = NULL; //value's reverse hash
-    SV *astring = NULL; //attribute key for reverse hash
-    HE *a_r_ent = NULL; //lval-type HE for looking/storing attr in vhash
-    SV *ref_in_vhash = NULL; //attribute entry in reverse hash
     SV *aobj    = NULL; //primary attribute entry, from attr_lookup
     SV *vref    = NULL; //value's entry in attribute hash
     SV *attrhash_ref = NULL; //reference for attribute hash, for adding actions
+    
+    SV **a_r_ent = NULL; //lval-type HE for looking/storing attr in vhash
+    char *astring = NULL;
+    
     hrattr_simple *aptr; //our private attribute structure
     
     int options = STORE_OPT_O_CREAT;
@@ -255,21 +254,11 @@ void HRA_store_a(SV *self, SV *attr, char *t, SV *value, ...)
     
     aptr = attr_from_sv(SvRV(aobj));
     assert(SvROK(aobj));
-    astring = newSVuv((UV)SvRV(aobj));
+    astring = attr_strkey(aptr, attr_getsize(aptr));
     
-    get_hashes(REF2TABLE(self), HR_HKEY_LOOKUP_REVERSE, &rlookup, HR_HKEY_LOOKUP_NULL);
-    vhash = get_vhash_from_rlookup(rlookup, vstring, VHASH_INIT_FULL);
-    a_r_ent = hv_fetch_ent(REF2HASH(vhash), astring, 1, 0);
-    ref_in_vhash = HeVAL(a_r_ent);
-    if(!SvROK(ref_in_vhash)) {
-        HR_DEBUG("Creating new reverse entry");
-        new_hashval_ref(ref_in_vhash, SvRV(aobj));
-        SvREFCNT_inc(SvRV(aobj));
-    } else {
-        goto GT_RET; //We already exist in here
+    if(!insert_into_vhash(value, aobj, astring, REF2TABLE(self), NULL)) {
+        goto GT_RET; /*No new insertions*/
     }
-    /*In this case, the attribute's primary reference is, again, inside each
-     vhash entry*/
     
     if(!HvKEYS(aptr->attrhash)) {
         /*First entry and we've already inserted our reverse entry*/
@@ -296,7 +285,6 @@ void HRA_store_a(SV *self, SV *attr, char *t, SV *value, ...)
         
     GT_RET:
     SvREFCNT_dec(vstring);
-    SvREFCNT_dec(astring);
     if(attrhash_ref) {
         RV_Freetmp(attrhash_ref);
     }
@@ -378,8 +366,8 @@ static inline void attr_delete_from_vhash(SV *self, SV *value)
     SV *vaddr = newSVuv((UV)SvRV(value));
     SV *rlookup;
     SV *vhash;
-        
-    mk_ptr_string(astr, SvRV(self));
+    
+    char *astr = attr_strkey(attr, attr_getsize(attr));
     
     get_hashes((HR_Table_t)attr_parent_tbl(attr),
                HR_HKEY_LOOKUP_REVERSE, &rlookup, HR_HKEY_LOOKUP_NULL);
@@ -388,12 +376,16 @@ static inline void attr_delete_from_vhash(SV *self, SV *value)
     
     U32 old_refcount = refcnt_ka_begin(value);
     if(vhash) {
+        HR_DEBUG("vhash has %d keys", HvKEYS(REF2HASH(vhash)));
+        
         HR_DEBUG("Deleting '%s' from vhash=%p", astr, SvRV(vhash));
         hv_delete(REF2HASH(vhash), astr, strlen(astr), G_DISCARD);
         if(!HvKEYS(REF2HASH(vhash))) {
             HR_DEBUG("Vhash empty");
             HR_PL_del_action_container(value, rlookup);
             hv_delete_ent(REF2HASH(rlookup), vaddr, G_DISCARD, 0);
+        } else {
+            HR_DEBUG("Vhash still has %d keys", HvKEYS(REF2HASH(vhash)));
         }
     }
     refcnt_ka_end(value, old_refcount);
@@ -444,7 +436,7 @@ Encapsulated object has been deleted
 
 static void encap_attr_destroy_hook(SV *encap_obj, SV *attr_sv, HR_Action *action_list)
 {
-    HR_DEBUG("Encap hook called!");
+    HR_DEBUG("Encap hook called. Attribute is %p", attr_sv);
     hrattr_encap *aencap = attr_encap_cast(attr_from_sv(attr_sv));
     aencap->obj_paddr = NULL;
     SvREFCNT_dec(aencap->obj_rv);
@@ -525,14 +517,18 @@ static void attr_destroy_trigger(SV *self_sv, SV *encap_obj, HR_Action *action_l
     }
     
     if(attr_lookup) {
-        HR_DEBUG("Deleting our reverse lookup attribute entry..");
+        HR_DEBUG("Deleting our attr_lookup entry..");
         hv_delete(REF2HASH(attr_lookup),
                   attr_strkey(attr, attrsz),
                   strlen(attr_strkey(attr, attrsz)),
                   G_DISCARD);
+        HR_DEBUG("attr_lookup entry deleted");
     }
     
     U32 old_refcount = refcnt_ka_begin(self_sv);
+    I32 attrvals = hv_iterinit(attr->attrhash);
+    HR_DEBUG("We have %d values", attrvals);
+    
     while( (vtmp = hv_iternextsv(attr->attrhash, &ktmp, &tmplen)) ) {
         SV *vptr, *vref;
         sscanf(ktmp, "%lu", &vptr); /*Don't ask.. also, uses slightly less memory*/
@@ -614,7 +610,12 @@ void HRXSATTR_ithread_postdup(SV *newself, SV *newtable, HV *ptr_map)
     HR_DEBUG("Fetching new attrhash_ref");
     
     SV *new_attrhash_ref = hr_dup_newsv_for_oldsv(ptr_map, attr->attrhash, 0);
+    
     attr->attrhash = (HV*)SvRV(new_attrhash_ref);
+    SvREFCNT_inc(attr->attrhash); /*Because the copy hash will soon be deleted*/
+    
+    attr->table = SvRV(newtable);
+    
     HR_DEBUG("New attrhash: %p", attr->attrhash);
         
     /*Now do the equivalent of: my @keys = keys %attrhash; foreach my $key (@keys)*/
@@ -666,7 +667,7 @@ void HRXSATTR_ithread_postdup(SV *newself, SV *newtable, HV *ptr_map)
             sv_rvweaken(new_encap);
         }
         HR_Action encap_actions[] = {
-            HR_DREF_FLDS_arg_for_cfunc(SvRV(new_encap), (SV*)&encap_attr_destroy_hook),
+            HR_DREF_FLDS_arg_for_cfunc(SvRV(newself), (SV*)&encap_attr_destroy_hook),
             HR_ACTION_LIST_TERMINATOR
         };
 		HR_DEBUG("Will add actions for new encapsulated object");
@@ -690,4 +691,5 @@ void HRXSATTR_ithread_postdup(SV *newself, SV *newtable, HV *ptr_map)
         strcat(oldstr, newptr);
         HR_DEBUG("New string: %s", oldstr);
     }
+    
 }

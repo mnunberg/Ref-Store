@@ -23,13 +23,18 @@ sub reset_counter {
 
 
 package HRTests;
-my $can_use_threads = eval 'use threads; 1';
 use Ref::Store::Common;
 use Scalar::Util qw(weaken isweak);
 use Test::More;
 use Data::Dumper;
 use Log::Fu;
 use Devel::Peek qw(Dump);
+use Dir::Self;
+
+use lib __DIR__;
+use threadtests;
+use HRTests::Threads;
+
 use blib;
 
 our $Impl;
@@ -321,96 +326,6 @@ sub test_oexcl {
     ok($@, "Error for duplicate insertion ($@)");
 }
 
-sub test_threads {
-    if(!$can_use_threads) {
-        diag "Not testing threads. Couldn't load threads.pm";
-        return;
-    }
-    note "Testing threads (String keys)";
-    my $table = $Impl->new();
-    my $v = ValueObject->new();
-    my $k = "some_key";
-    $table->store_sk($k, $v);
-    my $k2 = "other_key";
-    $table->store_sk($k2, $v);
-    #$table->dump();
-    
-    my $fn = sub {
-        #$table->dump();
-        my $res = $table->fetch_sk($k) == $v && $table->fetch_sk($k2) == $v;
-        return $res;
-    };
-    my $thr = threads->create($fn); #line displaying message
-    ok($fn->(), "Same thing works in the parent!");
-    ok($thr->join(), "Thread duplication");
-    #undef $thr;
-    
-    ############################################################################
-    note "Testing threads (object keys)";
-    
-    my $ko = KeyObject->new();
-    $table->store_sk($ko, $v);
-    
-    $fn = sub {
-        my $ret = $table->fetch_sk($ko) == $v;
-        return $ret;
-    };
-    
-    $thr = threads->create($fn);
-    ok($fn->(), "Object keys working");
-    ok($thr->join(),"Thread duplication for encapsulated object keys");
-    #undef $thr;
-    
-    note "Testing thread duplication with dual (key and/or value) objects";
-    #undef $table;
-    #$table = $Impl->new();
-    my $k_first = KeyObject->new();
-    my $v_first = ValueObject->new();
-    my $v_second = ValueObject->new();
-    
-    $table->store_sk($k_first, $v_first);
-    $table->store_sk($v_first, $v_second);
-    
-    $fn = sub {
-        $table->fetch_sk($k_first) == $v_first &&
-            $table->fetch_sk($v_first) == $v_second
-    };
-    
-    $thr = threads->create($fn);
-    ok($fn->(), "Ok in parent");
-    ok($thr->join(), "Ok in thread!");
-    
-    note "About to undef table";
-    
-    $table->purge($_) foreach ($k_first,$v_first,$v_second);
-    undef $table;
-    
-    $table = $Impl->new();
-    
-    note "Will test attributes";
-    $table->register_kt("ATTR");
-    $table->store_a(1, "ATTR", $v);
-    
-    $thr = threads->create(sub{
-        grep $v, $table->fetch_a(1, 'ATTR')
-    });
-    ok($thr->join(), "Got value from attribute store");
-
-    $table->register_kt('ATTROBJ');
-    $table->store_a($v_first, 'ATTROBJ', $v);
-    $table->store_a($v_first, 'ATTROBJ', $v_second);
-
-    $thr = threads->create(sub{
-            grep($v, $table->fetch_a($v_first, 'ATTROBJ')) &&
-            grep($v_second, $table->fetch_a($v_first, 'ATTROBJ'))
-    });
-
-    ok($thr->join(), "Attribute Object");
-
-    note("Returning..");
-}
-
-
 sub just_wondering {
     my $rs = $Impl->new();
     
@@ -569,27 +484,27 @@ sub test_all {
 
     }
     
+    $HRTests::Threads::Impl = $Impl;
+    
     SKIP : {
         skip "Only implemented in XS", 1 unless $Impl =~ /XS/;
         subtest "Iteration"                 => \&test_iter;
     }
     
-    SKIP : {
-        skip "Perl not threaded", 1 unless $can_use_threads;
-        if($Impl =~ /XS/) {
-            test_threads();
-        } else {
-            TODO: {
-                todo_skip "PP Backend doesn't support threads", 1;
-                subtest "Threads (PP)"  => \&test_threads;
-            };
-        }
-    };
+    if($Impl =~ /XS/) {
+        threads_test_all();
+    } else {
+        TODO: {
+            todo_skip "PP Backend doesn't support threads", 1;
+            subtest "Threads (PP)"  => \&threads_test_all;
+        };
+    }
     
     subtest "Simple use case (Filehandle tracking" =>\&just_wondering;
     subtest "Retention Policy"              =>\&retention;
     subtest "Debug/Info API"                => \&misc_api;
     subtest "Multiple table sanity check"   => \&test_multiple_hashes;
+    diag "Done testing";
     done_testing();
 }
 1;

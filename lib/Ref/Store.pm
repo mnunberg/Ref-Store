@@ -2,7 +2,7 @@ package Ref::Store;
 use strict;
 use warnings;
 
-our $VERSION = '0.15_0';
+our $VERSION = '0.18';
 
 use Scalar::Util qw(weaken);
 use Carp::Heavy;
@@ -521,17 +521,6 @@ sub store_a {
     return $value;
 }
 
-#sub tag {
-#	my ($self,$tag,$value, %options) = @_;
-#	$self->store_a(1, $tag, $value, %options);
-#}
-#
-#sub untag {
-#	my ($self,$tag,$value,%options) = @_;
-#	$self->dissoc_a(1, $tag, $value);
-#}
-
-
 
 sub fetch_a {
     my ($self,$attr,$t) = @_;
@@ -592,8 +581,6 @@ sub unlink_a {
 sub Dumperized {
 	my $self = shift;
 	return {
-		"This is the Toaster method" => "NOTICE!",
-		
 		'Reverse Lookups' => $self->reverse,
 		'Forward Lookups' => $self->forward,
 		'Scalar Lookups' => $self->scalar_lookup,
@@ -604,9 +591,17 @@ sub Dumperized {
 sub DESTROY {
 	return if in_global_destruction;
 	my $self = shift;
+	#log_err("Destroying $self...");
 	my @values;
 	foreach my $attr (values %{$self->attr_lookup}) {
-		foreach my $v (values %{$attr->get_hash}) {
+		#log_warn("Attr: $attr");
+		my $attrhash = $attr->get_hash();
+		next unless ref $attrhash;
+		if(ref $attrhash ne 'HASH') {
+			use Devel::Peek;
+			Devel::Peek::Dump($attrhash);
+		}
+		foreach my $v (values %$attrhash) {
 			next unless defined $v;
 			if($attr->can('unlink_value')) {
 				$attr->unlink_value($v);
@@ -614,6 +609,7 @@ sub DESTROY {
 			push @values, $v;
 		}
 	}
+	#log_warn("Attribute deletion done");
 	
 	foreach my $kobj (values %{$self->scalar_lookup}) {
 		my $v = $self->forward->{$kobj->kstring};
@@ -625,13 +621,19 @@ sub DESTROY {
 		delete $self->forward->{$kobj->kstring};
 	}
 	
+	#log_warn("Key deletion done");
+	
 	foreach my $value (@values) {
-		delete $self->reverse->{$value+0};
-		$self->dref_del_ptr($value, $self->reverse, $value + 0);
+		my $vaddr = $value + 0 ;
+		my $vhash = delete $self->reverse->{$vaddr};
+		#log_warn($vhash);
+		$self->dref_del_ptr($value, $self->reverse, $vaddr);
 	}
+	#log_warn("Will clear temporary value list");
 	undef @values;
 	
 	delete $Tables{$self+0};
+	#log_err("Destroy $self done");
 }
 
 ################################################################################
@@ -663,14 +665,20 @@ sub ithread_predup {
 	foreach my $attr (values %{$self->attr_lookup}) {
 		weaken($CloneAddrs{$attr+0} = $attr);
 		$attr->ithread_predup($self, \%CloneAddrs);
-		foreach my $v (values %{$attr->get_hash}) {
+		my $attrhash = $attr->get_hash;
+		#log_warn("ATTRHASH", $attrhash);
+		foreach my $v (values %$attrhash) {
 			weaken($CloneAddrs{$v+0} = $v);
 		}
 	}
 	
 	foreach my $vhash (values %{$self->reverse}) {
+		#log_warn($vhash);
 		weaken($CloneAddrs{$vhash+0} = $vhash);
 	}
+	#foreach (qw(attr_lookup scalar_lookup forward reverse)) {
+	#	log_warn($_, $self->can($_)->($self));
+	#}
 }
 
 sub ithread_postdup {
@@ -725,12 +733,25 @@ sub ithread_postdup {
 		delete $self->attr_lookup->{$astring};
 		weaken($self->attr_lookup->{$new_astring} = $aobj);
 	}
+	
+	#foreach (qw(attr_lookup scalar_lookup forward reverse)) {
+	#	log_warn($_, $self->can($_)->($self));
+	#}
+	
+	foreach my $vhash (values %{$self->reverse}) {
+		my @vhkeys = keys %$vhash;
+		foreach my $lkey (@vhkeys) {
+			my $lobj = delete $vhash->{$lkey};
+			$vhash->{$lobj->kstring} = $lobj;
+		}
+	}
 }
 
 $SIG{__DIE__}=\&confess;
 sub CLONE_SKIP {
 	my $pkg = shift;
 	return 0 if $pkg ne __PACKAGE__;
+	$Log::Fu::LINE_PREFIX = 'PARENT: ';
 	%CloneAddrs = ();
 	
 	while ( my ($addr,$obj) = each %Tables ) {
@@ -749,7 +770,7 @@ sub CLONE_SKIP {
 sub CLONE {
 	my $pkg = shift;
 	return if $pkg ne __PACKAGE__;
-	
+	$Log::Fu::LINE_PREFIX = 'CHILD: ';
 	my @tkeys = keys %Tables;
 	my @new_tables;
 	foreach my $old_taddr (@tkeys) {

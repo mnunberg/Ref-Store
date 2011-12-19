@@ -47,6 +47,7 @@ get_v_hashref(hrk_encap *ke, SV* value);
 
 static void k_encap_cleanup(SV *ksv, SV *_, HR_Action *action_list);
 static void encap_destroy_hook(SV *encap_obj, SV *ksv, HR_Action *action_list);
+static inline void k_encap_wire_actions(SV *ksv, SV *encap);
 
 typedef char* _stashspec[2];
 
@@ -175,6 +176,21 @@ static void k_encap_cleanup(SV *ksv, SV *_, HR_Action *action_list)
     HR_DEBUG("Returning...");
 }
 
+static inline void k_encap_wire_actions(SV *ksv, SV *encap)
+{
+    HR_Action key_actions[] = {
+        HR_DREF_FLDS_arg_for_cfunc(SvRV(ksv), &k_encap_cleanup),
+        HR_ACTION_LIST_TERMINATOR
+    };
+    HR_Action encap_actions[] = {
+        HR_DREF_FLDS_arg_for_cfunc(SvRV(ksv), &encap_destroy_hook),
+        HR_ACTION_LIST_TERMINATOR
+    };
+    
+    HR_add_actions_real(ksv, key_actions);
+    HR_add_actions_real(encap, encap_actions);
+}
+
 void HRXSK_encap_link_value(SV *self, SV *value)
 {
     /*NOOP*/
@@ -225,19 +241,7 @@ SV* HRXSK_encap_new(char *package, SV* object, SV *table, SV* forward, SV* scala
     hv_store( REF2HASH(scalar_lookup), key_s, strlen(key_s), self_hval, 0);
 #endif
 
-    /*DESTROY equiv*/
-    HR_Action key_actions[] = {
-        HR_DREF_FLDS_arg_for_cfunc(SvRV(ksv), &k_encap_cleanup),
-        HR_ACTION_LIST_TERMINATOR
-    };
-    
-    HR_Action encap_actions[] = {
-        HR_DREF_FLDS_arg_for_cfunc(SvRV(ksv), &encap_destroy_hook),
-        HR_ACTION_LIST_TERMINATOR
-    };
-    
-    HR_add_actions_real(ksv, key_actions);
-    HR_add_actions_real(object, encap_actions);
+    k_encap_wire_actions(ksv, object);
     
     HR_DEBUG("Returning key %p", SvRV(ksv));
     return ksv;
@@ -274,23 +278,6 @@ get_v_hashref(hrk_encap *ke, SV* value)
 /// Scalar Key Functions                                                     ///
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
-
-//static void k_simple_cleanup(SV *ksv, void *arg, HR_Action *action_list)
-//{
-//    SV *flookup, *slookup;
-//    
-//    hrk_simple *ksimple = ksimple_from_sv(ksv);
-//    
-//    int keylen = strlen(ksimple_strkey(ksimple));
-//    
-//    get_hashes(ksimple->table,
-//               HR_HKEY_LOOKUP_FORWARD, &flookup,
-//               HR_HKEY_LOOKUP_SCALAR, &slookup,
-//               HR_HKEY_LOOKUP_NULL);
-//    hv_delete(REF2HASH(flookup), ksimple_strkey(ksimple), keylen, G_DISCARD);
-//    hv_delete(REF2HASH(slookup), ksimple_strkey(ksimple), keylen, G_DISCARD);
-//}
-//
 
 SV* HRXSK_new(char *package, char *key, SV *forward, SV *scalar_lookup)
 {
@@ -329,12 +316,7 @@ SV* HRXSK_new(char *package, char *key, SV *forward, SV *scalar_lookup)
         HR_DREF_FLDS_Estr_from_hv(key_offset, forward),
         HR_ACTION_LIST_TERMINATOR
     };
-    
-    //HR_Action actions[] = {
-    //    HR_DREF_FLDS_arg_for_cfunc(SvRV(ksv), &k_simple_cleanup),
-    //    HR_ACTION_LIST_TERMINATOR
-    //};
-    
+        
     HR_add_actions_real(ksv, actions);
     return ksv;
 }
@@ -463,7 +445,7 @@ store_helper(int *opt_p, SV **key_p, SV **vsv, char **prefix_p, int *prefix_len)
             die("Value must be reference");
         }
         
-        else if(SvTYPE(*vsv) == SVt_PV) {
+        else {
             if(!SvROK(*key_p)) {
                 *prefix_p = SvPV(*vsv, *prefix_len);
                 if(!*prefix_p) {
@@ -478,8 +460,6 @@ store_helper(int *opt_p, SV **key_p, SV **vsv, char **prefix_p, int *prefix_len)
             }
             *vsv = ST(3);
             opt_start++;
-        } else {
-            die("Got weird arguments. store(key, [type], value, %options)");
         }
     }
     
@@ -634,7 +614,8 @@ void HRA_ithread_store_lookup_info(SV *self, HV *ptr_map)
 void HRXSK_encap_ithread_predup(SV *self, SV *table, HV *ptr_map, SV *value)
 {
     hrk_encap *ke = keptr_from_sv(SvRV(self));   
-    HR_Dup_Kinfo *ki = hr_dup_store_kinfo(ptr_map, HR_DUPKEY_KENCAP, ke->obj_paddr, 0);
+    HR_Dup_Kinfo *ki = hr_dup_store_kinfo(ptr_map, HR_DUPKEY_KENCAP,
+                                          ke->obj_paddr, 0);
     
     if(SvWEAKREF(ke->obj_ptr)) {
         ki->flags = HRK_DUP_WEAK_ENCAP;
@@ -657,28 +638,8 @@ void HRXSK_encap_ithread_postdup(SV *newself, SV *newtable, HV *ptr_map, UV old_
     
     HR_DEBUG("Old vhash was %p, old obj_paddr was %p", ki->vhash, ke->obj_paddr);
     
-    SV *new_encap = hr_dup_newsv_for_oldsv(ptr_map, ke->obj_paddr, 0);
-    SV *new_vhash = hr_dup_newsv_for_oldsv(ptr_map, ki->vhash, 0);
-    
-    SV *new_slookup;
-    get_hashes(REF2TABLE(newtable),
-               HR_HKEY_LOOKUP_SCALAR, &new_slookup,
-               HR_HKEY_LOOKUP_NULL);
-        
-    HR_Action key_actions[] = {
-        HR_DREF_FLDS_arg_for_cfunc(SvRV(newself), &k_encap_cleanup),
-        HR_ACTION_LIST_TERMINATOR
-    };
-    
-    HR_Action encap_actions[] = {
-        HR_DREF_FLDS_ptr_from_hv(SvRV(new_encap), new_slookup),
-        HR_DREF_FLDS_ptr_from_hv(SvRV(new_encap), new_vhash),
-        HR_ACTION_LIST_TERMINATOR
-    };
-    
-    HR_add_actions_real(newself, key_actions);
-    HR_add_actions_real(new_encap, encap_actions);
-    
+    SV *new_encap = hr_dup_newsv_for_oldsv(ptr_map, ke->obj_paddr, 0);    
+    k_encap_wire_actions(newself, new_encap);
     ke->obj_paddr = SvRV(new_encap);
     ke->obj_ptr = newSVsv(new_encap);
     if(ki->flags & HRK_DUP_WEAK_ENCAP) {
@@ -688,12 +649,15 @@ void HRXSK_encap_ithread_postdup(SV *newself, SV *newtable, HV *ptr_map, UV old_
     HR_DEBUG("Reassigned %p", SvRV(newtable));
 }
 
+
+/*Postdup for simple keys*/
 void HRXSK_ithread_postdup(SV *newself, SV *newtable, HV *ptr_map, UV old_table)
 {
     hrk_simple *ksp = ksimple_from_sv(SvRV(newself));
-    char *key = ksimple_strkey(ksp);
     
+    char *key = ksimple_strkey(ksp);
     SV *slookup, *flookup;
+    
     get_hashes(REF2TABLE(newtable),
                HR_HKEY_LOOKUP_SCALAR, &slookup,
                HR_HKEY_LOOKUP_FORWARD, &flookup,
