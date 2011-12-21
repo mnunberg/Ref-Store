@@ -59,10 +59,10 @@ BEGIN {
   }
 }
 
-use Ref::Store::PP;
+use Ref::Store::XS;
 
 sub _new_lookup {
-  my $lookup = Ref::Store::PP->new();
+  my $lookup = Ref::Store::XS->new();
   no strict 'refs';
   $lookup->register_kt("$_-", "$_-") foreach @LookupKeys;
   log_info("Initializing lookup $lookup");

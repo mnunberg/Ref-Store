@@ -26,7 +26,8 @@ hr_freehook(pTHX_ SV* object, MAGIC *mg)
 	HR_DEBUG("FREEHOOK: mg=%p, obj=%p", mg, object);
 	HR_DEBUG("Object refcount: %d", SvREFCNT(object));
 	OURMAGIC_infree(mg) = 1;
-#if PERL_REVISION == 5 && PERL_VERSION < 10
+	
+#if (PERL_VERSION < 10) || (PERL_VERSION == 10 && PERL_SUBVERSION < 1)
 #warning "Nasty SvMAGIC_set hack"
 	SvMAGIC_set(object, mg);
 #endif
