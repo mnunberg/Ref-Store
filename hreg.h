@@ -30,7 +30,7 @@ static int _hr_enable_debug = -1;
 #define _mg_action_list(mg) (HR_Action*)mg->mg_ptr
 
 static inline void
-_mk_ptr_string(char *str, unsigned long long value)
+_mk_ptr_string(char *str, size_t value)
 {
 /*Pirated from:
  http://code.google.com/p/stringencoders/
@@ -54,7 +54,7 @@ _mk_ptr_string(char *str, unsigned long long value)
 
 #define mk_ptr_string(vname, ptr) \
     char vname[128]; \
-    _mk_ptr_string(vname, (unsigned long long)ptr);
+    _mk_ptr_string(vname, (size_t)ptr);
 
 #ifdef __GNUC__
 #define inline __inline__
